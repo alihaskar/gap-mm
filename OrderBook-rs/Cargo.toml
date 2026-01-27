@@ -1,0 +1,83 @@
+[package]
+name = "orderbook-rs"
+version = "0.5.0"
+edition = "2024"
+authors = ["Joaquin Bejar <jb@taunais.com>"]
+description = "A high-performance, lock-free price level implementation for limit order books in Rust. This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/joaquinbejar/OrderBook-rs"
+homepage = "https://github.com/joaquinbejar/OrderBook-rs"
+keywords = ["finance", "orderbook", "trading"]
+categories = ["finance", "data-structures"]
+
+
+include = [
+    "benches/**/*",
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+    "examples/**/*.rs",
+    "tests/**/*.rs",
+    "Makefile",
+    "rust-toolchain.toml",
+    "Draws/**/*.png",
+    "Docker/**/*.Dockerfile",
+    "Docker/**/*.yml",
+]
+
+[dependencies]
+tracing = { workspace = true }
+uuid = { workspace = true }
+pricelevel = { workspace = true }
+dashmap = { workspace = true }
+crossbeam-skiplist = { workspace = true }
+crossbeam = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt"] }
+bitflags = { workspace = true }
+
+[features]
+default = []
+special_orders = []
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "benches"
+path = "benches/mod.rs"
+harness = false
+
+[[test]]
+name = "tests"
+path = "tests/unit/mod.rs"
+
+
+[lib]
+name = "orderbook_rs"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+members = [
+    "examples"
+]
+
+[workspace.dependencies]
+orderbook-rs = { path = "." }
+pricelevel = "0.6"
+tracing = "0.1"
+uuid = { version = "1.20", features = ["v4", "v5", "serde"] }
+dashmap = "6.1"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+tokio = { version = "1.49", features = ["sync", "rt"] }
+crossbeam-skiplist = "0.1"
+crossbeam = "0.8"
+bitflags = { version = "2.10", features = ["serde"] }
+tracing-subscriber = "0.3"
