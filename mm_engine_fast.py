@@ -38,28 +38,28 @@ def calculate_quotes_fast(mid_price, signal, confidence, tick_size=0.10):
     if confidence == CONF_HIGH:  # HIGH confidence
         if signal == SIGNAL_UP:  # Want to buy
             bid_edge = 1.0  # aggressive
-            ask_edge = 3.0  # defensive
+            ask_edge = 10.0  # defensive (wide)
         elif signal == SIGNAL_DOWN:  # Want to sell
-            bid_edge = 3.0  # defensive
+            bid_edge = 10.0  # defensive (wide)
             ask_edge = 1.0  # aggressive
         else:  # NEUTRAL
-            bid_edge = 1.0
-            ask_edge = 1.0
+            bid_edge = 10.0  # wide
+            ask_edge = 10.0  # wide
             
     elif confidence == CONF_MED:  # MED confidence
         if signal == SIGNAL_UP:
             bid_edge = 1.0
-            ask_edge = 2.0
+            ask_edge = 10.0  # defensive (wide)
         elif signal == SIGNAL_DOWN:
-            bid_edge = 2.0
+            bid_edge = 10.0  # defensive (wide)
             ask_edge = 1.0
         else:  # NEUTRAL
-            bid_edge = 1.0
-            ask_edge = 1.0
+            bid_edge = 10.0  # wide
+            ask_edge = 10.0  # wide
             
     else:  # LOW confidence
-        bid_edge = 2.0
-        ask_edge = 2.0
+        bid_edge = 10.0  # wide
+        ask_edge = 10.0  # wide
     
     # Calculate raw prices
     bid_price = mid_price - (bid_edge * tick_size)
