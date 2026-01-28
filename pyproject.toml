@@ -7,6 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "<3.15,>=3.12"
+numba = "^0.63.1"
 
 
 

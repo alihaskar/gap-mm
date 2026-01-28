@@ -71,8 +71,14 @@ impl TradingNode {
                                 dict.set_item("imbalance", update.imbalance).ok();
                                 dict.set_item("bid_depth_5", update.bid_depth_5).ok();
                                 dict.set_item("ask_depth_5", update.ask_depth_5).ok();
+                                dict.set_item("timestamp", update.timestamp).ok();
 
                                 if let Err(e) = callback.call1(py, (dict,)) {
+                                    // Check if it's a KeyboardInterrupt
+                                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py) {
+                                        eprintln!("\nKeyboardInterrupt received, exiting...");
+                                        std::process::exit(0);
+                                    }
                                     eprintln!("Error calling Python callback: {}", e);
                                 }
                             });

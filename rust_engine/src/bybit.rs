@@ -19,6 +19,7 @@ pub enum BybitMessage {
         asks: Vec<(f64, f64)>,
         #[allow(dead_code)]
         update_id: u64,
+        timestamp: u64,
     },
     Delta {
         symbol: String,
@@ -27,6 +28,7 @@ pub enum BybitMessage {
         asks: Vec<(f64, f64)>,
         #[allow(dead_code)]
         update_id: u64,
+        timestamp: u64,
     },
 }
 
@@ -42,6 +44,7 @@ pub struct MarketUpdate {
     pub imbalance: f64,
     pub bid_depth_5: u64,
     pub ask_depth_5: u64,
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,7 +53,6 @@ struct OrderBookResponse {
     topic: String,
     #[serde(rename = "type")]
     msg_type: String,
-    #[allow(dead_code)]
     ts: u64,
     data: OrderBookData,
 }
@@ -146,7 +148,7 @@ impl OrderBookState {
         ))
     }
 
-    pub fn get_enriched_update(&self, symbol: &str, source: &str) -> Option<MarketUpdate> {
+    pub fn get_enriched_update(&self, symbol: &str, source: &str, timestamp: u64) -> Option<MarketUpdate> {
         let best_bid = self.book.best_bid()?;
         let best_ask = self.book.best_ask()?;
 
@@ -170,6 +172,7 @@ impl OrderBookState {
             imbalance,
             bid_depth_5: (bid_depth_5 as f64 / PRICE_SCALE) as u64,
             ask_depth_5: (ask_depth_5 as f64 / PRICE_SCALE) as u64,
+            timestamp,
         })
     }
 
@@ -189,23 +192,39 @@ pub async fn start_bybit_streams(
 ) -> Result<mpsc::Receiver<BybitMessage>> {
     let (tx, rx) = mpsc::channel(1000);
 
-    // Spawn spot connection
+    // Spawn spot connection with auto-reconnect
     let spot_tx = tx.clone();
     let symbol_spot = symbol.to_string();
     tokio::spawn(async move {
-        if let Err(e) = connect_ws(BYBIT_SPOT_WS, &symbol_spot, "bybit_spot", spot_tx).await {
-            eprintln!("[bybit_spot] Error: {}", e);
+        loop {
+            match connect_ws_with_reconnect(BYBIT_SPOT_WS, &symbol_spot, "bybit_spot", spot_tx.clone()).await {
+                Ok(_) => {
+                    eprintln!("[bybit_spot] Connection ended normally");
+                }
+                Err(e) => {
+                    eprintln!("[bybit_spot] Connection error: {}", e);
+                }
+            }
+            eprintln!("[bybit_spot] Reconnecting in 5 seconds...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     });
 
-    // Spawn linear perp connection
+    // Spawn linear perp connection with auto-reconnect
     let linear_tx = tx.clone();
     let symbol_linear = symbol.to_string();
     tokio::spawn(async move {
-        if let Err(e) =
-            connect_ws(BYBIT_LINEAR_WS, &symbol_linear, "bybit_linear_perp", linear_tx).await
-        {
-            eprintln!("[bybit_linear_perp] Error: {}", e);
+        loop {
+            match connect_ws_with_reconnect(BYBIT_LINEAR_WS, &symbol_linear, "bybit_linear_perp", linear_tx.clone()).await {
+                Ok(_) => {
+                    eprintln!("[bybit_linear_perp] Connection ended normally");
+                }
+                Err(e) => {
+                    eprintln!("[bybit_linear_perp] Connection error: {}", e);
+                }
+            }
+            eprintln!("[bybit_linear_perp] Reconnecting in 5 seconds...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     });
 
@@ -221,21 +240,23 @@ pub async fn process_orderbook_updates(
     let mut books: HashMap<String, OrderBookState> = HashMap::new();
 
     while let Some(msg) = rx.recv().await {
-        let (symbol, source, bids, asks, is_snapshot) = match msg {
+        let (symbol, source, bids, asks, is_snapshot, timestamp) = match msg {
             BybitMessage::Snapshot {
                 symbol,
                 source,
                 bids,
                 asks,
+                timestamp,
                 ..
-            } => (symbol, source, bids, asks, true),
+            } => (symbol, source, bids, asks, true, timestamp),
             BybitMessage::Delta {
                 symbol,
                 source,
                 bids,
                 asks,
+                timestamp,
                 ..
-            } => (symbol, source, bids, asks, false),
+            } => (symbol, source, bids, asks, false, timestamp),
         };
 
         let key = format!("{}:{}", source, symbol);
@@ -255,14 +276,14 @@ pub async fn process_orderbook_updates(
         let changed = state.update_and_check_change();
 
         if changed {
-            if let Some(update) = state.get_enriched_update(&symbol, &source) {
+            if let Some(update) = state.get_enriched_update(&symbol, &source, timestamp) {
                 callback(update);
             }
         }
     }
 }
 
-async fn connect_ws(
+async fn connect_ws_with_reconnect(
     ws_url: &str,
     symbol: &str,
     source: &str,
@@ -271,7 +292,8 @@ async fn connect_ws(
     let (ws_stream, _) = connect_async(ws_url).await?;
     println!("[{}] Connected to {}", source, ws_url);
 
-    let (mut write, mut read) = ws_stream.split();
+    let (write, mut read) = ws_stream.split();
+    let write = std::sync::Arc::new(tokio::sync::Mutex::new(write));
 
     // Subscribe to orderbook
     let subscribe_msg = serde_json::json!({
@@ -279,10 +301,27 @@ async fn connect_ws(
         "args": [format!("orderbook.200.{}", symbol)]
     });
 
-    write
-        .send(Message::Text(subscribe_msg.to_string().into()))
-        .await?;
+    {
+        let mut w = write.lock().await;
+        w.send(Message::Text(subscribe_msg.to_string().into())).await?;
+    }
     println!("[{}] Subscribed to orderbook.200.{}", source, symbol);
+
+    // Spawn ping task to keep connection alive (every 20 seconds)
+    let write_ping = write.clone();
+    let source_ping = source.to_string();
+    let ping_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(20));
+        loop {
+            interval.tick().await;
+            let ping_msg = serde_json::json!({"op": "ping"});
+            let mut w = write_ping.lock().await;
+            if w.send(Message::Text(ping_msg.to_string().into())).await.is_err() {
+                eprintln!("[{}] Failed to send ping, connection likely closed", source_ping);
+                break;
+            }
+        }
+    });
 
     // Handle messages
     while let Some(msg) = read.next().await {
@@ -293,10 +332,14 @@ async fn connect_ws(
                 }
             }
             Ok(Message::Ping(data)) => {
-                write.send(Message::Pong(data)).await?;
+                let mut w = write.lock().await;
+                w.send(Message::Pong(data)).await?;
+            }
+            Ok(Message::Pong(_)) => {
+                // Received pong response
             }
             Ok(Message::Close(_)) => {
-                println!("[{}] WebSocket closed", source);
+                println!("[{}] WebSocket closed by server", source);
                 break;
             }
             Err(e) => {
@@ -306,6 +349,9 @@ async fn connect_ws(
             _ => {}
         }
     }
+
+    // Clean up ping task
+    ping_task.abort();
 
     Ok(())
 }
@@ -333,6 +379,7 @@ async fn process_ws_message(
             bids,
             asks,
             update_id: data.u,
+            timestamp: response.ts,
         },
         "delta" => BybitMessage::Delta {
             symbol: data.s,
@@ -340,6 +387,7 @@ async fn process_ws_message(
             bids,
             asks,
             update_id: data.u,
+            timestamp: response.ts,
         },
         _ => return Ok(()),
     };
