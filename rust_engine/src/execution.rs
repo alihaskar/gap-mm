@@ -309,7 +309,7 @@ impl BybitAuth {
 
         // Format price to 1 decimal place for BTCUSDT (tick_size=0.10)
         let price_str = format!("{:.1}", price);
-        let qty_str = format!("{:.3}", quantity);  // 3 decimals for BTC qty
+        let qty_str = format!("{:.5}", quantity);  // 5 decimals for BTC qty (supports down to 0.00001 BTC)
 
         let body = serde_json::json!({
             "category": &self.market_type,  // "spot" or "linear"
@@ -377,7 +377,7 @@ impl BybitAuth {
         });
 
         if let Some(qty) = new_quantity {
-            let qty_str = format!("{:.3}", qty);
+            let qty_str = format!("{:.5}", qty);  // 5 decimals for BTC qty
             body["qty"] = serde_json::json!(qty_str);
         }
 
