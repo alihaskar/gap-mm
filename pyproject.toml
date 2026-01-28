@@ -1,13 +1,14 @@
 [tool.poetry]
 name = "volume-hedge"
 version = "0.1.0"
-description = ""
-authors = ["Your Name <you@example.com>"]
+description = "High-performance market making system with Rust execution engine"
+authors = ["ali askar <26202651+alihaskar@users.noreply.github.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "<3.15,>=3.12"
 numba = "^0.63.1"
+python-dotenv = "^1.0.0"
 
 
 

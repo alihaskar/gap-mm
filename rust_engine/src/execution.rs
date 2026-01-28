@@ -597,16 +597,26 @@ impl ExecutionEngine {
     ) -> Result<ReconcileResult> {
         let mut result = ReconcileResult::default();
 
-        // Process bid side
+        // Process bid side - don't fail entire reconcile if one side has insufficient balance
         if let Some(bid_price) = target_bid {
-            let action = self.reconcile_side(OrderSide::Buy, bid_price).await?;
-            result.bid_action = Some(action);
+            match self.reconcile_side(OrderSide::Buy, bid_price).await {
+                Ok(action) => result.bid_action = Some(action),
+                Err(e) => {
+                    // Log but continue - other side might work (e.g., insufficient USDT but have BTC)
+                    eprintln!("BID reconcile failed: {}", e);
+                }
+            }
         }
 
-        // Process ask side
+        // Process ask side - independent of bid side
         if let Some(ask_price) = target_ask {
-            let action = self.reconcile_side(OrderSide::Sell, ask_price).await?;
-            result.ask_action = Some(action);
+            match self.reconcile_side(OrderSide::Sell, ask_price).await {
+                Ok(action) => result.ask_action = Some(action),
+                Err(e) => {
+                    // Log but continue - other side might work (e.g., insufficient BTC but have USDT)
+                    eprintln!("ASK reconcile failed: {}", e);
+                }
+            }
         }
 
         Ok(result)
@@ -617,13 +627,21 @@ impl ExecutionEngine {
         // Round to tick size
         let target_price = self.round_to_tick(target_price);
 
-        // Check position limits (use net_qty which can be negative for short)
+        // Check position limits - be smart about which side to block
         let position = self.position_state.get_position(&self.symbol).await;
         let current_position = position.as_ref().map(|p| p.net_qty).unwrap_or(0.0);
 
-        if current_position.abs() >= self.max_position {
+        // If at max LONG position, only allow SELL (to reduce position)
+        if current_position >= self.max_position && side == OrderSide::Buy {
             return Ok(OrderAction::Skipped {
-                reason: "Position limit reached".to_string(),
+                reason: "Max LONG position - only SELLs allowed".to_string(),
+            });
+        }
+
+        // If at max SHORT position, only allow BUY (to reduce position)
+        if current_position <= -self.max_position && side == OrderSide::Sell {
+            return Ok(OrderAction::Skipped {
+                reason: "Max SHORT position - only BUYs allowed".to_string(),
             });
         }
 
@@ -658,7 +676,8 @@ impl ExecutionEngine {
                     updated_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
                 };
 
-                // Submit to exchange FIRST (don't add to internal state until confirmed)
+                // Submit to exchange FIRST - track latency
+                let start = std::time::Instant::now();
                 let response = match self.auth.submit_order(
                     &self.symbol,
                     side,
@@ -672,6 +691,7 @@ impl ExecutionEngine {
                         return Err(e);
                     }
                 };
+                let latency_ms = start.elapsed().as_millis() as u64;
 
                 // Success - add to both states
                 let mut confirmed_order = order;
@@ -685,6 +705,7 @@ impl ExecutionEngine {
                 Ok(OrderAction::Submitted {
                     order_id: response.order_id,
                     price: target_price,
+                    latency_ms,
                 })
             }
             Some(existing_order) => {
@@ -696,16 +717,18 @@ impl ExecutionEngine {
                         price: existing_order.price,
                     })
                 } else {
-                    // Price changed -> Amend order
+                    // Price changed -> Amend order with latency tracking
                     let order_id = existing_order.order_id.as_ref()
                         .ok_or_else(|| anyhow!("Order has no exchange ID"))?;
 
+                    let start = std::time::Instant::now();
                     let response = self.auth.amend_order(
                         &self.symbol,
                         order_id,
                         target_price,
                         None,
                     ).await;
+                    let latency_ms = start.elapsed().as_millis() as u64;
 
                     // Handle amend response
                     match response {
@@ -720,6 +743,7 @@ impl ExecutionEngine {
                                 order_id: resp.order_id,
                                 old_price: existing_order.price,
                                 new_price: target_price,
+                                latency_ms,
                             })
                         },
                         Err(e) => {
@@ -797,8 +821,8 @@ pub struct ReconcileResult {
 
 #[derive(Debug, Clone)]
 pub enum OrderAction {
-    Submitted { order_id: String, price: f64 },
-    Amended { order_id: String, old_price: f64, new_price: f64 },
+    Submitted { order_id: String, price: f64, latency_ms: u64 },
+    Amended { order_id: String, old_price: f64, new_price: f64, latency_ms: u64 },
     NoChange { order_id: String, price: f64 },
     Skipped { reason: String },
 }

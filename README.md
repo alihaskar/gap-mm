@@ -33,17 +33,134 @@ High-performance Rust orderbook engine with Python bindings for Bybit spot and p
    poetry install
    ```
 
-4. **Build Rust engine**
+4. **Configure API credentials**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your Bybit API credentials
+   ```
+   
+   Get your API keys from [Bybit API Management](https://www.bybit.com/app/user/api-management)
+
+5. **Build Rust engine**
    ```bash
    cd rust_engine
    poetry run maturin develop --release
    cd ..
    ```
 
-5. **Test the system**
+6. **Test the system**
    ```bash
+   # Demo mode (streaming only, no trading)
    poetry run python test_feed.py
+   
+   # Gap predictor simulation (no trading)
+   poetry run python test_gap_predictor.py
+   
+   # Execution engine demo (requires API keys)
+   poetry run python test_execution_engine.py
+   
+   # LIVE TRADING (places real orders!)
+   poetry run python test_live_trading.py
    ```
+
+## 🧠 Dual-Engine Architecture
+
+The system implements a **"Brain vs. Hands"** architecture with two independent Rust engines:
+
+### 1. **TradingNode** (The "Brain") - Market Data Streaming
+- **Purpose**: Real-time orderbook processing and gap detection
+- **Technology**: WebSocket streaming with ultra-fast gap probability calculations
+- **Features**:
+  - Real-time L2 orderbook updates (Bybit spot + perpetual)
+  - Gap detection algorithm (resistance/support levels)
+  - Orderbook imbalance calculations
+  - Sub-millisecond processing via Rust
+  
+### 2. **ExecutionNode** (The "Hands") - Order Management System (OMS/EMS)
+- **Purpose**: Order lifecycle management and execution
+- **Technology**: Bybit REST API v5 with HMAC-SHA256 authentication
+- **Features**:
+  - **Dual-state management**: Internal (optimistic) + Exchange (confirmed)
+  - **Smart reconciliation**: Amend orders instead of cancel+replace
+  - **Self-healing**: REST + WebSocket hybrid for reliability
+  - **Position limits**: Automatic exposure checks
+  - **Fast execution**: Connection pooling and keep-alive
+
+### Why Two Engines?
+
+```
+[Market Data WS] --> [TradingNode] --> [Gap Predictor] --> [Target Quotes]
+                                                                  |
+                                                                  v
+[Private WS] --> [ExecutionNode State] <--> [Reconciler]
+      ^                                          |
+      |                                          | (Submit/Amend/Cancel)
+      +------------- [Bybit REST API] <----------+
+```
+
+**Benefits**:
+- **Separation of concerns**: Data processing vs. order execution
+- **Independent scaling**: Stream engine runs at market data speed, execution runs at strategy speed
+- **Resilience**: If one engine fails, the other continues
+- **Modularity**: Each engine can be tested and deployed independently
+
+### Usage Example
+
+```python
+from rust_engine import TradingNode, ExecutionNode
+from mm_engine_fast import encode_signal, calculate_quotes_fast
+
+# Initialize both engines
+stream = TradingNode()
+executor = ExecutionNode(
+    api_key="your_key",
+    api_secret="your_secret",
+    symbol="BTCUSDT",
+    tick_size=0.10,
+    max_position=1.0
+)
+
+# Market data callback
+def on_market_update(data):
+    mid = data['mid_price']
+    gap_prob = data['gap_prob_up']
+    
+    # Calculate target quotes
+    signal, conf = encode_signal(gap_prob)
+    bid, ask, _, _, _ = calculate_quotes_fast(mid, signal, conf)
+    
+    # Reconcile orders
+    result = executor.reconcile(target_bid=bid, target_ask=ask)
+    print(f"BID: {result['bid']['type']}, ASK: {result['ask']['type']}")
+
+# Start streaming (both engines run simultaneously)
+stream.start_stream(on_market_update, "BTCUSDT")
+```
+
+See `test_execution_engine.py` for a complete working example.
+
+### Configuration
+
+All API credentials and settings are managed via the `.env` file:
+
+```bash
+# Copy the example file
+cp .env.example .env
+
+# Edit with your settings
+nano .env
+```
+
+Required variables:
+- `BYBIT_API_KEY` - Your Bybit API key
+- `BYBIT_API_SECRET` - Your Bybit API secret
+- `TRADING_SYMBOL` - Trading pair (default: BTCUSDT)
+
+Optional variables:
+- `MAX_POSITION_SIZE` - Maximum position size (default: 1.0)
+- `TICK_SIZE` - Minimum price increment (default: 0.10)
+- `MIN_SPREAD_BPS` - Minimum spread in basis points
+- `MAX_INVENTORY` - Maximum inventory limit
 
 ## 📁 Project Structure
 

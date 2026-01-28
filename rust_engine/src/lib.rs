@@ -388,16 +388,18 @@ fn action_to_dict(py: Python, action: OrderAction) -> PyObject {
     let dict = PyDict::new_bound(py);
     
     match action {
-        OrderAction::Submitted { order_id, price } => {
+        OrderAction::Submitted { order_id, price, latency_ms } => {
             dict.set_item("type", "submitted").ok();
             dict.set_item("order_id", order_id).ok();
             dict.set_item("price", price).ok();
+            dict.set_item("latency_ms", latency_ms).ok();
         }
-        OrderAction::Amended { order_id, old_price, new_price } => {
+        OrderAction::Amended { order_id, old_price, new_price, latency_ms } => {
             dict.set_item("type", "amended").ok();
             dict.set_item("order_id", order_id).ok();
             dict.set_item("old_price", old_price).ok();
             dict.set_item("new_price", new_price).ok();
+            dict.set_item("latency_ms", latency_ms).ok();
         }
         OrderAction::NoChange { order_id, price } => {
             dict.set_item("type", "no_change").ok();
