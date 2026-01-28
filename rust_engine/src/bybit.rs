@@ -389,13 +389,10 @@ pub async fn process_orderbook_updates(
         state.apply_levels(Side::Buy, &bids);
         state.apply_levels(Side::Sell, &asks);
 
-        // Check if best changed
-        let changed = state.update_and_check_change();
-
-        if changed {
-            if let Some(update) = state.get_enriched_update(&symbol, &source, timestamp) {
-                callback(update);
-            }
+        // Calculate gaps and send update on EVERY delta (not just BBA changes)
+        // This allows the Python side to recalculate quotes and requote when needed
+        if let Some(update) = state.get_enriched_update(&symbol, &source, timestamp) {
+            callback(update);
         }
     }
 }
