@@ -45,6 +45,11 @@ pub struct MarketUpdate {
     pub bid_depth_5: u64,
     pub ask_depth_5: u64,
     pub timestamp: u64,
+    pub gap_prob_up: f64,      // Probability next price moves up based on gaps
+    pub gap_distance_up: u64,  // Number of empty ticks upward
+    pub gap_distance_dn: u64,  // Number of empty ticks downward
+    pub liquidity_up: u64,     // Volume beyond gap (up)
+    pub liquidity_dn: u64,     // Volume beyond gap (down)
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,6 +166,10 @@ impl OrderBookState {
         let bid_depth_5 = self.book.total_depth_at_levels(5, Side::Buy);
         let ask_depth_5 = self.book.total_depth_at_levels(5, Side::Sell);
 
+        // Calculate gap-based directional probability
+        let (gap_prob_up, gap_dist_up, gap_dist_dn, liq_up, liq_dn) = 
+            self.calculate_gap_probability(best_bid, best_ask);
+
         Some(MarketUpdate {
             symbol: symbol.to_string(),
             source: source.to_string(),
@@ -173,7 +182,115 @@ impl OrderBookState {
             bid_depth_5: (bid_depth_5 as f64 / PRICE_SCALE) as u64,
             ask_depth_5: (ask_depth_5 as f64 / PRICE_SCALE) as u64,
             timestamp,
+            gap_prob_up,
+            gap_distance_up: gap_dist_up,
+            gap_distance_dn: gap_dist_dn,
+            liquidity_up: liq_up,
+            liquidity_dn: liq_dn,
         })
+    }
+
+    fn calculate_gap_probability(&self, best_bid: u128, best_ask: u128) -> (f64, u64, u64, u64, u64) {
+        const MAX_SCAN_TICKS: u128 = 100;
+        const LIQUIDITY_LEVELS: usize = 5;
+        
+        // Minimum tick size for BTCUSDT (0.10)
+        let tick_size: u128 = (0.10 * PRICE_SCALE as f64) as u128;
+        
+        // Get the orderbook maps
+        let asks = self.book.get_asks();
+        let bids = self.book.get_bids();
+        
+        // Scan upward from best ask to find first gap and liquidity
+        let mut gap_up = 0u64;
+        let mut price_up = best_ask;
+        let mut found_liquidity_up = false;
+        
+        for _ in 0..MAX_SCAN_TICKS {
+            price_up += tick_size;
+            if let Some(level) = asks.get(&price_up) {
+                if level.total_quantity() > 0 {
+                    found_liquidity_up = true;
+                    break;
+                }
+            }
+            gap_up += 1;
+        }
+        
+        // Scan downward from best bid to find first gap and liquidity
+        let mut gap_dn = 0u64;
+        let mut price_dn = best_bid;
+        let mut found_liquidity_dn = false;
+        
+        for _ in 0..MAX_SCAN_TICKS {
+            if price_dn < tick_size {
+                break;
+            }
+            price_dn -= tick_size;
+            if let Some(level) = bids.get(&price_dn) {
+                if level.total_quantity() > 0 {
+                    found_liquidity_dn = true;
+                    break;
+                }
+            }
+            gap_dn += 1;
+        }
+        
+        // Measure liquidity beyond the gap (sum of next K levels)
+        let mut liquidity_up = 0u64;
+        if found_liquidity_up {
+            let mut scan_price = price_up;
+            for _ in 0..LIQUIDITY_LEVELS {
+                if let Some(level) = asks.get(&scan_price) {
+                    liquidity_up += level.total_quantity();
+                }
+                scan_price += tick_size;
+            }
+        }
+        
+        let mut liquidity_dn = 0u64;
+        if found_liquidity_dn {
+            let mut scan_price = price_dn;
+            for _ in 0..LIQUIDITY_LEVELS {
+                if scan_price < tick_size {
+                    break;
+                }
+                if let Some(level) = bids.get(&scan_price) {
+                    liquidity_dn += level.total_quantity();
+                }
+                if scan_price < tick_size {
+                    break;
+                }
+                scan_price -= tick_size;
+            }
+        }
+        
+        // Calculate conditional probability using linear distance penalty
+        // P_up = ( V_up / (gap_up_ticks + ε) ) / ( V_up / (gap_up_ticks + ε) + V_dn / (gap_dn_ticks + ε) )
+        // 
+        // This model computes a conditional next-price direction probability from the instantaneous
+        // order book geometry. It measures how far price must move (in ticks) to reach liquidity
+        // on each side of the BBA and how much liquidity is available once that gap is crossed.
+        // Each side is scored as liquidity divided by gap distance, and the scores are normalized
+        // into a probability. The output reflects a short-horizon microstructure bias useful for
+        // execution and entry skewing, not directional forecasting.
+        
+        const EPSILON: f64 = 1.0; // Small constant to avoid division by zero (1 tick)
+        
+        let v_up = liquidity_up as f64;
+        let v_dn = liquidity_dn as f64;
+        
+        // Score each side: liquidity / distance
+        let score_up = v_up / (gap_up as f64 + EPSILON);
+        let score_dn = v_dn / (gap_dn as f64 + EPSILON);
+        
+        let prob_up = if score_up + score_dn > 0.0 {
+            score_up / (score_up + score_dn)
+        } else {
+            0.5 // neutral if no data
+        };
+        
+        (prob_up, gap_up, gap_dn, liquidity_up, liquidity_dn)
     }
 
     pub fn update_and_check_change(&mut self) -> bool {
