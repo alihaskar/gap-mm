@@ -91,10 +91,10 @@ def encode_signal(gap_prob):
     
     # CORRECT LOGIC: high P_up means price going up → UP
     if gap_prob > 0.500001:
-        signal = SIGNAL_UP
+        signal = SIGNAL_DOWN ##SIGNAL_UP
         confidence = CONF_HIGH if gap_prob > 0.7 else CONF_MED
     elif gap_prob < 0.499999:
-        signal = SIGNAL_DOWN
+        signal = SIGNAL_UP
         confidence = CONF_HIGH if gap_prob < 0.3 else CONF_MED
     else:
         signal = SIGNAL_NEUTRAL
