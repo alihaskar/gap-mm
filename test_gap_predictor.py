@@ -34,8 +34,6 @@ class PerformanceTracker:
         self.neutral = 0
         self.total_bps = 0.0
         self.last_stats_print = None
-        self.update_count = 0
-        self.last_market_state = None
         
     def record_prediction(self, signal, price, timestamp, gap_prob):
         """Record a prediction and check previous prediction outcome."""
@@ -72,13 +70,13 @@ class PerformanceTracker:
         self.last_timestamp = timestamp
     
     def should_print_stats(self, current_time):
-        """Check if we should print stats (every 5 seconds)."""
+        """Check if we should print stats (every 10 seconds)."""
         if self.last_stats_print is None:
             self.last_stats_print = current_time
-            return True  # Print on first update
+            return False
         
         elapsed = (current_time - self.last_stats_print).total_seconds()
-        if elapsed >= 5:
+        if elapsed >= 10:
             self.last_stats_print = current_time
             return True
         return False
@@ -164,65 +162,37 @@ def on_market_data(data):
             
             # Record prediction and check previous outcome
             tracker.record_prediction(signal_text, spot['mid'], ts, gap_prob)
-            tracker.update_count += 1
             
             # Calculate market making quotes with ULTRA-FAST Numba
             mm_bid, mm_ask, bid_edge, ask_edge, spread_ticks = calculate_quotes_fast(
                 spot['mid'], signal_code, conf_code
             )
             
-            # Store current market state
-            tracker.last_market_state = {
-                'timestamp': ts_str,
-                'spot_mid': spot['mid'],
-                'perp_mid': perp['mid'],
-                'diff': diff,
-                'gap_signal': gap_signal,
-                'confidence': confidence,
-                'gap_prob': gap_prob,
-                'gap_up': gap_up,
-                'gap_dn': gap_dn,
-                'liq_up': liq_up,
-                'liq_dn': liq_dn,
-                'mm_bid': mm_bid,
-                'mm_ask': mm_ask,
-                'bid_edge': bid_edge,
-                'ask_edge': ask_edge,
-                'spread_ticks': spread_ticks
-            }
+            print(f"[{ts_str}]", flush=True)
+            print(f"  SPOT:  {spot['mid']:>9.2f}  |  PERP: {perp['mid']:>9.2f}  |  DIFF: {diff:>+7.2f}", flush=True)
+            print(f"  GAP SIGNAL: {gap_signal} ({confidence}) | P(up) = {gap_prob:.3f}", flush=True)
+            print(f"  Gaps:  ↑{gap_up:>3} ticks  ↓{gap_dn:>3} ticks", flush=True)
+            print(f"  Liquidity beyond gap:  ↑{liq_up:>8}  ↓{liq_dn:>8}", flush=True)
+            print(f"", flush=True)
+            print(f"  💰 MM QUOTES:", flush=True)
+            print(f"     BID: {mm_bid:>9.2f}  ({int(bid_edge)} ticks from mid)", flush=True)
+            print(f"     ASK: {mm_ask:>9.2f}  ({int(ask_edge)} ticks from mid)", flush=True)
+            print(f"     SPREAD: {int(spread_ticks)} ticks  |  Edge: {(mm_ask - mm_bid):.2f}", flush=True)
             
-            # Print comprehensive stats every 5 seconds
+            # Print stats every 10 seconds
             if tracker.should_print_stats(ts):
                 stats = tracker.get_stats()
-                state = tracker.last_market_state
-                
-                print(f"\n{'='*80}", flush=True)
-                print(f"  📊 PERFORMANCE REPORT [{state['timestamp']}]", flush=True)
-                print(f"{'='*80}", flush=True)
-                
-                # Market State
-                print(f"\n  📈 CURRENT MARKET:", flush=True)
-                print(f"     SPOT: {state['spot_mid']:>9.2f}  |  PERP: {state['perp_mid']:>9.2f}  |  DIFF: {state['diff']:>+7.2f}", flush=True)
-                print(f"     Signal: {state['gap_signal']} ({state['confidence']}) | P(up) = {state['gap_prob']:.3f}", flush=True)
-                print(f"     Gaps: ↑{state['gap_up']:>3} ticks  ↓{state['gap_dn']:>3} ticks", flush=True)
-                print(f"     Liquidity: ↑{state['liq_up']:>8}  ↓{state['liq_dn']:>8}", flush=True)
-                
-                # MM Quotes
-                print(f"\n  💰 MM QUOTES:", flush=True)
-                print(f"     BID: {state['mm_bid']:>9.2f} ({int(state['bid_edge'])}t)  |  ASK: {state['mm_ask']:>9.2f} ({int(state['ask_edge'])}t)", flush=True)
-                print(f"     Spread: {int(state['spread_ticks'])} ticks  |  Edge: {(state['mm_ask'] - state['mm_bid']):.2f}", flush=True)
-                
-                # Prediction Accuracy
                 if stats:
-                    print(f"\n  🎯 PREDICTION ACCURACY:", flush=True)
-                    print(f"     Updates Processed: {tracker.update_count}", flush=True)
-                    print(f"     Total Predictions: {stats['total']}", flush=True)
-                    print(f"     Correct: {stats['correct']} ({stats['correct']/stats['total']*100:.1f}%) | Wrong: {stats['wrong']} ({stats['wrong']/stats['total']*100:.1f}%)", flush=True)
-                    print(f"     Accuracy (excl. neutral): {stats['accuracy']:.1f}%", flush=True)
-                    print(f"     Cumulative P&L: {stats['total_bps']:+.2f} bps", flush=True)
-                    print(f"     Expected Value: {stats['ev_bps_per_min']:+.2f} bps/min", flush=True)
-                
-                print(f"{'='*80}\n", flush=True)
+                    print(f"\n{'='*80}", flush=True)
+                    print(f"  📊 PERFORMANCE STATS", flush=True)
+                    print(f"  Total Predictions: {stats['total']}", flush=True)
+                    print(f"  Correct: {stats['correct']} | Wrong: {stats['wrong']} | Neutral: {stats['neutral']}", flush=True)
+                    print(f"  Accuracy: {stats['accuracy']:.1f}%", flush=True)
+                    print(f"  Total P&L: {stats['total_bps']:+.2f} bps", flush=True)
+                    print(f"  Expected Value: {stats['ev_bps_per_min']:+.2f} bps/min", flush=True)
+                    print(f"{'='*80}\n", flush=True)
+            
+            print("-" * 80, flush=True)
             
     except Exception as e:
         print(f"ERROR in callback: {e}", flush=True)

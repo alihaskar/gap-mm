@@ -89,12 +89,12 @@ def encode_signal(gap_prob):
         confidence: 2=HIGH, 1=MED, 0=LOW
     """
     
-    # INVERTED LOGIC: high P_up means resistance above → DOWN
-    if gap_prob > 0.6:
-        signal = SIGNAL_DOWN
-        confidence = CONF_HIGH if gap_prob > 0.7 else CONF_MED
-    elif gap_prob < 0.4:
+    # CORRECT LOGIC: high P_up means price going up → UP
+    if gap_prob > 0.500001:
         signal = SIGNAL_UP
+        confidence = CONF_HIGH if gap_prob > 0.7 else CONF_MED
+    elif gap_prob < 0.499999:
+        signal = SIGNAL_DOWN
         confidence = CONF_HIGH if gap_prob < 0.3 else CONF_MED
     else:
         signal = SIGNAL_NEUTRAL

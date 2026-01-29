@@ -9,6 +9,7 @@ readme = "README.md"
 python = "<3.15,>=3.12"
 numba = "^0.63.1"
 python-dotenv = "^1.0.0"
+requests = "^2.32.5"
 
 
 
