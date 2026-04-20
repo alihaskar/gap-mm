@@ -1,9 +1,8 @@
 mod bybit;
 
 use anyhow::Result;
-use bybit::{start_bybit_streams, process_orderbook_updates};
+use bybit::{process_orderbook_updates, start_bybit_streams};
 use rustls::crypto::ring;
-
 
 #[tokio::main]
 async fn main() -> Result<()> {

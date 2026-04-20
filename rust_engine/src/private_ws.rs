@@ -1,11 +1,11 @@
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -43,7 +43,7 @@ pub struct FillEvent {
     pub symbol: String,
     pub order_id: String,
     pub client_order_id: String,
-    pub side: String,  // "Buy" or "Sell"
+    pub side: String, // "Buy" or "Sell"
     pub fill_price: f64,
     pub fill_qty: f64,
     pub cum_qty: f64,
@@ -116,17 +116,15 @@ async fn connect_and_stream(
     tx: &mpsc::UnboundedSender<FillEvent>,
 ) -> Result<()> {
     eprintln!("Connecting to Bybit private WebSocket...");
-    
+
     let (ws_stream, _) = connect_async(BYBIT_PRIVATE_WS).await?;
     let (mut write, mut read) = ws_stream.split();
 
     eprintln!("✓ Connected to private WebSocket");
 
     // Authenticate
-    let expires = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis() as u64 + 10000;
-    
+    let expires = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64 + 10000;
+
     let sign_str = format!("GET/realtime{}", expires);
     let mut mac = HmacSha256::new_from_slice(api_secret.as_bytes())?;
     mac.update(sign_str.as_bytes());
@@ -173,7 +171,7 @@ async fn connect_and_stream(
         match msg {
             Ok(Message::Text(text)) => {
                 eprintln!("📨 Private WS Message: {}", text);
-                
+
                 if text.contains("\"op\":\"subscribe\"") {
                     eprintln!("   → Subscription confirmation");
                     continue; // Skip subscription confirmation
@@ -222,21 +220,22 @@ fn process_execution_report(report: ExecutionReport) -> Option<FillEvent> {
     let fill_price: f64 = report.exec_price.parse().unwrap_or(0.0);
     let order_qty: f64 = report.order_qty.parse().unwrap_or(0.0);
     let leaves_qty: f64 = report.leaves_qty.parse().unwrap_or(0.0);
-    let cum_qty = order_qty - leaves_qty;  // Calculate cumulative filled
+    let cum_qty = order_qty - leaves_qty; // Calculate cumulative filled
     let timestamp: u64 = report.exec_time.parse().ok()?;
 
     // Determine order status based on leaves_qty
     let order_status = if leaves_qty == 0.0 && cum_qty > 0.0 {
         "Filled"
     } else if leaves_qty > 0.0 && cum_qty > 0.0 {
-        "PartiallyFilled"  
+        "PartiallyFilled"
     } else {
         "New"
     };
 
     // Log ALL execution reports (for debugging)
-    eprintln!("📡 Execution Report: {} | {} | {} | Status: {} | Fill: {:.6} | Cum: {:.6} | Maker: {}", 
-        report.symbol, 
+    eprintln!(
+        "📡 Execution Report: {} | {} | {} | Status: {} | Fill: {:.6} | Cum: {:.6} | Maker: {}",
+        report.symbol,
         &report.order_id[..report.order_id.len().min(10)],
         report.side,
         order_status,
@@ -255,7 +254,7 @@ fn process_execution_report(report: ExecutionReport) -> Option<FillEvent> {
             fill_price,
             fill_qty,
             cum_qty,
-            avg_price: fill_price,  // For single fills, avg = fill price
+            avg_price: fill_price, // For single fills, avg = fill price
             order_status: order_status.to_string(),
             timestamp,
         })

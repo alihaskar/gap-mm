@@ -2,7 +2,7 @@ mod bybit;
 mod execution;
 mod private_ws;
 
-use bybit::{start_bybit_streams, process_orderbook_updates};
+use bybit::{process_orderbook_updates, start_bybit_streams};
 use execution::{ExecutionEngine, OrderAction};
 use private_ws::start_private_stream;
 use pyo3::prelude::*;
@@ -17,7 +17,10 @@ fn build_pinned_runtime(name: &str) -> std::io::Result<tokio::runtime::Runtime> 
     let total = num_cpus::get_physical();
     let pin_ids: Vec<_> = cores.into_iter().rev().take(2).collect();
     let ids: Vec<_> = pin_ids.iter().map(|c| c.id).collect();
-    eprintln!("[gap-mm] runtime '{}' pinning workers to cores {:?} (of {} physical)", name, ids, total);
+    eprintln!(
+        "[gap-mm] runtime '{}' pinning workers to cores {:?} (of {} physical)",
+        name, ids, total
+    );
 
     let next = Arc::new(AtomicUsize::new(0));
     tokio::runtime::Builder::new_multi_thread()
@@ -25,7 +28,9 @@ fn build_pinned_runtime(name: &str) -> std::io::Result<tokio::runtime::Runtime> 
         .enable_all()
         .thread_name(format!("gap-mm-{}", name))
         .on_thread_start(move || {
-            if pin_ids.is_empty() { return; }
+            if pin_ids.is_empty() {
+                return;
+            }
             let i = next.fetch_add(1, AtomicOrdering::Relaxed) % pin_ids.len();
             core_affinity::set_for_current(pin_ids[i]);
         })
@@ -103,15 +108,22 @@ impl TradingNode {
                                 dict.set_item("bid_depth_5", update.bid_depth_5).ok();
                                 dict.set_item("ask_depth_5", update.ask_depth_5).ok();
                                 dict.set_item("timestamp", update.timestamp).ok();
-                                dict.set_item("gap_prob_resistance_up", update.gap_prob_resistance_up).ok();
-                                dict.set_item("gap_distance_up", update.gap_distance_up).ok();
-                                dict.set_item("gap_distance_dn", update.gap_distance_dn).ok();
+                                dict.set_item(
+                                    "gap_prob_resistance_up",
+                                    update.gap_prob_resistance_up,
+                                )
+                                .ok();
+                                dict.set_item("gap_distance_up", update.gap_distance_up)
+                                    .ok();
+                                dict.set_item("gap_distance_dn", update.gap_distance_dn)
+                                    .ok();
                                 dict.set_item("liquidity_up", update.liquidity_up).ok();
                                 dict.set_item("liquidity_dn", update.liquidity_dn).ok();
 
                                 if let Err(e) = callback.call1(py, (dict,)) {
                                     // Check if it's a KeyboardInterrupt
-                                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py) {
+                                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                                    {
                                         eprintln!("\nKeyboardInterrupt received, exiting...");
                                         std::process::exit(0);
                                     }
@@ -240,7 +252,7 @@ impl ExecutionNode {
             match start_private_stream(&api_key, &api_secret).await {
                 Ok(mut rx) => {
                     eprintln!("✓ Fill listener started");
-                    
+
                     while let Some(fill) = rx.recv().await {
                         // Update position and get the updated position
                         let position = if let Some(eng) = engine.lock().await.as_ref() {
@@ -270,7 +282,9 @@ impl ExecutionNode {
                                     if let Some(pos) = position {
                                         let pos_dict = PyDict::new(py);
                                         pos_dict.set_item("net_qty", pos.net_qty).ok();
-                                        pos_dict.set_item("avg_entry_price", pos.avg_entry_price).ok();
+                                        pos_dict
+                                            .set_item("avg_entry_price", pos.avg_entry_price)
+                                            .ok();
                                         pos_dict.set_item("realized_pnl", pos.realized_pnl).ok();
                                         dict.set_item("position", pos_dict).ok();
                                     }
@@ -280,7 +294,9 @@ impl ExecutionNode {
                                     }
                                 }
                             });
-                        }).await.ok();
+                        })
+                        .await
+                        .ok();
                     }
                 }
                 Err(e) => {
@@ -301,8 +317,9 @@ impl ExecutionNode {
         py.allow_threads(|| {
             runtime.block_on(async {
                 let engine_guard = engine.lock().await;
-                let engine = engine_guard.as_ref()
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
+                let engine = engine_guard.as_ref().ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized")
+                })?;
 
                 let position = engine.position_state.get_position(&symbol);
 
@@ -332,12 +349,17 @@ impl ExecutionNode {
         py.allow_threads(|| {
             runtime.block_on(async {
                 let engine_guard = engine.lock().await;
-                let engine = engine_guard.as_ref()
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
+                let engine = engine_guard.as_ref().ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized")
+                })?;
 
-                engine.auth.cancel_order(&symbol, &order_id)
+                engine
+                    .auth
+                    .cancel_order(&symbol, &order_id)
                     .await
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
 
                 Ok(())
             })
@@ -345,19 +367,28 @@ impl ExecutionNode {
     }
 
     /// Reconcile orders based on target prices
-    fn reconcile(&self, py: Python, target_bid: Option<f64>, target_ask: Option<f64>) -> PyResult<PyObject> {
+    fn reconcile(
+        &self,
+        py: Python,
+        target_bid: Option<f64>,
+        target_ask: Option<f64>,
+    ) -> PyResult<PyObject> {
         let runtime = self.runtime.clone();
         let engine = self.engine.clone();
 
         py.allow_threads(|| {
             runtime.block_on(async {
                 let engine_guard = engine.lock().await;
-                let engine = engine_guard.as_ref()
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
+                let engine = engine_guard.as_ref().ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized")
+                })?;
 
-                let result = engine.reconcile_orders(target_bid, target_ask)
+                let result = engine
+                    .reconcile_orders(target_bid, target_ask)
                     .await
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
 
                 Python::with_gil(|py| {
                     let dict = PyDict::new(py);
@@ -385,12 +416,13 @@ impl ExecutionNode {
             // This is called before the main runtime starts, so use our runtime
             runtime.block_on(async {
                 let engine_guard = engine.lock().await;
-                let engine = engine_guard.as_ref()
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
+                let engine = engine_guard.as_ref().ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized")
+                })?;
 
-                engine.sync_orders()
-                    .await
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                engine.sync_orders().await.map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                })?;
 
                 Ok(())
             })
@@ -408,15 +440,24 @@ impl ExecutionNode {
 
 fn action_to_dict(py: Python, action: OrderAction) -> PyObject {
     let dict = PyDict::new(py);
-    
+
     match action {
-        OrderAction::Submitted { order_id, price, latency_ms } => {
+        OrderAction::Submitted {
+            order_id,
+            price,
+            latency_ms,
+        } => {
             dict.set_item("type", "submitted").ok();
             dict.set_item("order_id", order_id).ok();
             dict.set_item("price", price).ok();
             dict.set_item("latency_ms", latency_ms).ok();
         }
-        OrderAction::Amended { order_id, old_price, new_price, latency_ms } => {
+        OrderAction::Amended {
+            order_id,
+            old_price,
+            new_price,
+            latency_ms,
+        } => {
             dict.set_item("type", "amended").ok();
             dict.set_item("order_id", order_id).ok();
             dict.set_item("old_price", old_price).ok();
@@ -433,7 +474,7 @@ fn action_to_dict(py: Python, action: OrderAction) -> PyObject {
             dict.set_item("reason", reason).ok();
         }
     }
-    
+
     dict.into()
 }
 

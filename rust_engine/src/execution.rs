@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 
 use crate::private_ws::FillEvent;
 
@@ -88,7 +88,8 @@ impl OrderState {
     }
 
     pub fn update_exchange(&self, order: Order) {
-        self.exchange.insert(order.client_order_id.clone(), order.clone());
+        self.exchange
+            .insert(order.client_order_id.clone(), order.clone());
         self.internal.insert(order.client_order_id.clone(), order);
     }
 
@@ -127,7 +128,7 @@ impl OrderState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
     pub symbol: String,
-    pub net_qty: f64,  // Positive = long, negative = short, 0 = flat
+    pub net_qty: f64, // Positive = long, negative = short, 0 = flat
     pub avg_entry_price: f64,
     pub total_buy_qty: f64,
     pub total_sell_qty: f64,
@@ -160,17 +161,20 @@ impl PositionState {
     pub fn process_fill(&self, fill: &FillEvent) {
         let fill_value = fill.fill_price * fill.fill_qty;
 
-        let mut position = self.positions.entry(fill.symbol.clone()).or_insert_with(|| Position {
-            symbol: fill.symbol.clone(),
-            net_qty: 0.0,
-            avg_entry_price: 0.0,
-            total_buy_qty: 0.0,
-            total_sell_qty: 0.0,
-            total_buy_value: 0.0,
-            total_sell_value: 0.0,
-            realized_pnl: 0.0,
-            last_update: fill.timestamp,
-        });
+        let mut position = self
+            .positions
+            .entry(fill.symbol.clone())
+            .or_insert_with(|| Position {
+                symbol: fill.symbol.clone(),
+                net_qty: 0.0,
+                avg_entry_price: 0.0,
+                total_buy_qty: 0.0,
+                total_sell_qty: 0.0,
+                total_buy_value: 0.0,
+                total_sell_value: 0.0,
+                realized_pnl: 0.0,
+                last_update: fill.timestamp,
+            });
 
         if fill.side == "Buy" {
             if position.net_qty < 0.0 {
@@ -224,12 +228,17 @@ pub struct BybitAuth {
     api_key: String,
     api_secret: String,
     client: reqwest::Client,
-    market_type: String,  // "spot" or "linear"
+    market_type: String, // "spot" or "linear"
     base_url: String,
 }
 
 impl BybitAuth {
-    pub fn new(api_key: String, api_secret: String, market_type: String, base_url: Option<String>) -> Self {
+    pub fn new(
+        api_key: String,
+        api_secret: String,
+        market_type: String,
+        base_url: Option<String>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .pool_max_idle_per_host(10)
@@ -257,7 +266,7 @@ impl BybitAuth {
         let mut mac = HmacSha256::new_from_slice(self.api_secret.as_bytes())
             .expect("HMAC can take key of any size");
         mac.update(sign_str.as_bytes());
-        
+
         hex::encode(mac.finalize().into_bytes())
     }
 
@@ -270,13 +279,11 @@ impl BybitAuth {
         quantity: f64,
         client_order_id: &str,
     ) -> Result<SubmitOrderResponse> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis() as u64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
 
         // Format price to 1 decimal place for BTCUSDT (tick_size=0.10)
         let price_str = format!("{:.1}", price);
-        let qty_str = format!("{:.5}", quantity);  // 5 decimals for BTC qty (supports down to 0.00001 BTC)
+        let qty_str = format!("{:.5}", quantity); // 5 decimals for BTC qty (supports down to 0.00001 BTC)
 
         let body = serde_json::json!({
             "category": &self.market_type,  // "spot" or "linear"
@@ -311,14 +318,27 @@ impl BybitAuth {
             return Err(anyhow!("API error {}: {}", status, text));
         }
 
-        let result: BybitResponse<SubmitOrderResponse> = serde_json::from_str(&text)
-            .map_err(|e| anyhow!("Failed to parse submit response: {} | Response: {}", e, text))?;
-        
+        let result: BybitResponse<SubmitOrderResponse> =
+            serde_json::from_str(&text).map_err(|e| {
+                anyhow!(
+                    "Failed to parse submit response: {} | Response: {}",
+                    e,
+                    text
+                )
+            })?;
+
         if result.ret_code != 0 {
-            return Err(anyhow!("Bybit error {}: {} | Response: {}", result.ret_code, result.ret_msg, text));
+            return Err(anyhow!(
+                "Bybit error {}: {} | Response: {}",
+                result.ret_code,
+                result.ret_msg,
+                text
+            ));
         }
 
-        result.result.ok_or_else(|| anyhow!("No result in response: {}", text))
+        result
+            .result
+            .ok_or_else(|| anyhow!("No result in response: {}", text))
     }
 
     /// Amend existing order
@@ -329,9 +349,7 @@ impl BybitAuth {
         new_price: f64,
         new_quantity: Option<f64>,
     ) -> Result<AmendOrderResponse> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis() as u64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
 
         // Format price to 1 decimal place for BTCUSDT (tick_size=0.10)
         let price_str = format!("{:.1}", new_price);
@@ -344,7 +362,7 @@ impl BybitAuth {
         });
 
         if let Some(qty) = new_quantity {
-            let qty_str = format!("{:.5}", qty);  // 5 decimals for BTC qty
+            let qty_str = format!("{:.5}", qty); // 5 decimals for BTC qty
             body["qty"] = serde_json::json!(qty_str);
         }
 
@@ -372,19 +390,24 @@ impl BybitAuth {
 
         let result: BybitResponse<AmendOrderResponse> = serde_json::from_str(&text)
             .map_err(|e| anyhow!("Failed to parse amend response: {} | Response: {}", e, text))?;
-        
+
         if result.ret_code != 0 {
-            return Err(anyhow!("Bybit error {}: {} | Response: {}", result.ret_code, result.ret_msg, text));
+            return Err(anyhow!(
+                "Bybit error {}: {} | Response: {}",
+                result.ret_code,
+                result.ret_msg,
+                text
+            ));
         }
 
-        result.result.ok_or_else(|| anyhow!("No result in response: {}", text))
+        result
+            .result
+            .ok_or_else(|| anyhow!("No result in response: {}", text))
     }
 
     /// Cancel order
     pub async fn cancel_order(&self, symbol: &str, order_id: &str) -> Result<CancelOrderResponse> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis() as u64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
 
         let body = serde_json::json!({
             "category": &self.market_type,
@@ -415,19 +438,23 @@ impl BybitAuth {
         }
 
         let result: BybitResponse<CancelOrderResponse> = serde_json::from_str(&text)?;
-        
+
         if result.ret_code != 0 {
-            return Err(anyhow!("Bybit error {}: {}", result.ret_code, result.ret_msg));
+            return Err(anyhow!(
+                "Bybit error {}: {}",
+                result.ret_code,
+                result.ret_msg
+            ));
         }
 
-        result.result.ok_or_else(|| anyhow!("No result in response"))
+        result
+            .result
+            .ok_or_else(|| anyhow!("No result in response"))
     }
 
     /// Get open orders
     pub async fn get_open_orders(&self, symbol: &str) -> Result<Vec<OrderInfo>> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis() as u64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
 
         let params = format!("category={}&symbol={}", self.market_type, symbol);
         let signature = self.sign(timestamp, "");
@@ -450,9 +477,13 @@ impl BybitAuth {
         }
 
         let result: BybitResponse<OpenOrdersResponse> = serde_json::from_str(&text)?;
-        
+
         if result.ret_code != 0 {
-            return Err(anyhow!("Bybit error {}: {}", result.ret_code, result.ret_msg));
+            return Err(anyhow!(
+                "Bybit error {}: {}",
+                result.ret_code,
+                result.ret_msg
+            ));
         }
 
         Ok(result.result.map(|r| r.list).unwrap_or_default())
@@ -532,7 +563,7 @@ pub struct ExecutionEngine {
     symbol: String,
     tick_size: f64,
     max_position: f64,
-    min_order_size: f64,  // Minimum order size for the symbol
+    min_order_size: f64, // Minimum order size for the symbol
 }
 
 impl ExecutionEngine {
@@ -547,7 +578,12 @@ impl ExecutionEngine {
         api_base_url: Option<String>,
     ) -> Self {
         Self {
-            auth: Arc::new(BybitAuth::new(api_key, api_secret, market_type, api_base_url)),
+            auth: Arc::new(BybitAuth::new(
+                api_key,
+                api_secret,
+                market_type,
+                api_base_url,
+            )),
             order_state: Arc::new(OrderState::new()),
             position_state: Arc::new(PositionState::new()),
             symbol,
@@ -578,10 +614,16 @@ impl ExecutionEngine {
         let (bid_res, ask_res) = tokio::join!(bid_fut, ask_fut);
 
         let mut result = ReconcileResult::default();
-        if let Some(Ok(a)) = bid_res { result.bid_action = Some(a); }
-        else if let Some(Err(e)) = bid_res { eprintln!("BID reconcile failed: {}", e); }
-        if let Some(Ok(a)) = ask_res { result.ask_action = Some(a); }
-        else if let Some(Err(e)) = ask_res { eprintln!("ASK reconcile failed: {}", e); }
+        if let Some(Ok(a)) = bid_res {
+            result.bid_action = Some(a);
+        } else if let Some(Err(e)) = bid_res {
+            eprintln!("BID reconcile failed: {}", e);
+        }
+        if let Some(Ok(a)) = ask_res {
+            result.ask_action = Some(a);
+        } else if let Some(Err(e)) = ask_res {
+            eprintln!("ASK reconcile failed: {}", e);
+        }
         Ok(result)
     }
 
@@ -620,7 +662,8 @@ impl ExecutionEngine {
                     });
                 }
 
-                let client_order_id = format!("{}_{}_{}",
+                let client_order_id = format!(
+                    "{}_{}_{}",
                     self.symbol,
                     side.as_str(),
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis()
@@ -641,13 +684,17 @@ impl ExecutionEngine {
 
                 // Submit to exchange FIRST - track latency
                 let start = std::time::Instant::now();
-                let response = match self.auth.submit_order(
-                    &self.symbol,
-                    side,
-                    target_price,
-                    self.min_order_size,
-                    &client_order_id,
-                ).await {
+                let response = match self
+                    .auth
+                    .submit_order(
+                        &self.symbol,
+                        side,
+                        target_price,
+                        self.min_order_size,
+                        &client_order_id,
+                    )
+                    .await
+                {
                     Ok(resp) => resp,
                     Err(e) => {
                         // Submission failed - don't pollute internal state
@@ -660,8 +707,9 @@ impl ExecutionEngine {
                 let mut confirmed_order = order;
                 confirmed_order.order_id = Some(response.order_id.clone());
                 confirmed_order.status = OrderStatus::New;
-                confirmed_order.updated_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
-                
+                confirmed_order.updated_at =
+                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+
                 self.order_state.add_internal(confirmed_order.clone());
                 self.order_state.update_exchange(confirmed_order);
 
@@ -681,16 +729,16 @@ impl ExecutionEngine {
                     })
                 } else {
                     // Price changed -> Amend order with latency tracking
-                    let order_id = existing_order.order_id.as_ref()
+                    let order_id = existing_order
+                        .order_id
+                        .as_ref()
                         .ok_or_else(|| anyhow!("Order has no exchange ID"))?;
 
                     let start = std::time::Instant::now();
-                    let response = self.auth.amend_order(
-                        &self.symbol,
-                        order_id,
-                        target_price,
-                        None,
-                    ).await;
+                    let response = self
+                        .auth
+                        .amend_order(&self.symbol, order_id, target_price, None)
+                        .await;
                     let latency_ms = start.elapsed().as_millis() as u64;
 
                     // Handle amend response
@@ -699,7 +747,8 @@ impl ExecutionEngine {
                             // Update exchange state
                             let mut updated_order = existing_order.clone();
                             updated_order.price = target_price;
-                            updated_order.updated_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+                            updated_order.updated_at =
+                                SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
                             self.order_state.update_exchange(updated_order);
 
                             Ok(OrderAction::Amended {
@@ -708,12 +757,17 @@ impl ExecutionEngine {
                                 new_price: target_price,
                                 latency_ms,
                             })
-                        },
+                        }
                         Err(e) => {
                             // If order doesn't exist on exchange, remove from internal and retry
                             let err_msg = e.to_string();
-                            if err_msg.contains("170213") || err_msg.contains("Order does not exist") {
-                                eprintln!("Order {} doesn't exist on exchange, clearing and resubmitting", order_id);
+                            if err_msg.contains("170213")
+                                || err_msg.contains("Order does not exist")
+                            {
+                                eprintln!(
+                                    "Order {} doesn't exist on exchange, clearing and resubmitting",
+                                    order_id
+                                );
                                 self.order_state.remove_order(side);
                                 // Return error to trigger resubmit on next reconcile
                                 Err(e)
@@ -784,8 +838,22 @@ pub struct ReconcileResult {
 
 #[derive(Debug, Clone)]
 pub enum OrderAction {
-    Submitted { order_id: String, price: f64, latency_ms: u64 },
-    Amended { order_id: String, old_price: f64, new_price: f64, latency_ms: u64 },
-    NoChange { order_id: String, price: f64 },
-    Skipped { reason: String },
+    Submitted {
+        order_id: String,
+        price: f64,
+        latency_ms: u64,
+    },
+    Amended {
+        order_id: String,
+        old_price: f64,
+        new_price: f64,
+        latency_ms: u64,
+    },
+    NoChange {
+        order_id: String,
+        price: f64,
+    },
+    Skipped {
+        reason: String,
+    },
 }

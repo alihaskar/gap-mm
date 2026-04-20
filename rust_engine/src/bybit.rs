@@ -300,7 +300,13 @@ impl OrderBookState {
             0.5
         };
 
-        (gap_prob_resistance_up, gap_up, gap_dn, liquidity_up, liquidity_dn)
+        (
+            gap_prob_resistance_up,
+            gap_up,
+            gap_dn,
+            liquidity_up,
+            liquidity_dn,
+        )
     }
 
     pub fn update_and_check_change(&mut self) -> bool {
@@ -320,7 +326,14 @@ pub async fn start_bybit_streams(symbol: &str) -> Result<mpsc::Receiver<BybitMes
     let symbol_spot = symbol.to_string();
     tokio::spawn(async move {
         loop {
-            match connect_ws_with_reconnect(BYBIT_SPOT_WS, &symbol_spot, "bybit_spot", spot_tx.clone()).await {
+            match connect_ws_with_reconnect(
+                BYBIT_SPOT_WS,
+                &symbol_spot,
+                "bybit_spot",
+                spot_tx.clone(),
+            )
+            .await
+            {
                 Ok(_) => eprintln!("[bybit_spot] Connection ended normally"),
                 Err(e) => eprintln!("[bybit_spot] Connection error: {}", e),
             }
@@ -333,7 +346,14 @@ pub async fn start_bybit_streams(symbol: &str) -> Result<mpsc::Receiver<BybitMes
     let symbol_linear = symbol.to_string();
     tokio::spawn(async move {
         loop {
-            match connect_ws_with_reconnect(BYBIT_LINEAR_WS, &symbol_linear, "bybit_linear_perp", linear_tx.clone()).await {
+            match connect_ws_with_reconnect(
+                BYBIT_LINEAR_WS,
+                &symbol_linear,
+                "bybit_linear_perp",
+                linear_tx.clone(),
+            )
+            .await
+            {
                 Ok(_) => eprintln!("[bybit_linear_perp] Connection ended normally"),
                 Err(e) => eprintln!("[bybit_linear_perp] Connection error: {}", e),
             }
@@ -355,12 +375,22 @@ pub async fn process_orderbook_updates(
 
     while let Some(msg) = rx.recv().await {
         let (symbol, source, bids, asks, is_snapshot, timestamp) = match msg {
-            BybitMessage::Snapshot { symbol, source, bids, asks, timestamp, .. } => {
-                (symbol, source, bids, asks, true, timestamp)
-            }
-            BybitMessage::Delta { symbol, source, bids, asks, timestamp, .. } => {
-                (symbol, source, bids, asks, false, timestamp)
-            }
+            BybitMessage::Snapshot {
+                symbol,
+                source,
+                bids,
+                asks,
+                timestamp,
+                ..
+            } => (symbol, source, bids, asks, true, timestamp),
+            BybitMessage::Delta {
+                symbol,
+                source,
+                bids,
+                asks,
+                timestamp,
+                ..
+            } => (symbol, source, bids, asks, false, timestamp),
         };
 
         let key = format!("{}:{}", source, symbol);
@@ -400,7 +430,8 @@ async fn connect_ws_with_reconnect(
 
     {
         let mut w = write.lock().await;
-        w.send(Message::Text(subscribe_msg.to_string().into())).await?;
+        w.send(Message::Text(subscribe_msg.to_string().into()))
+            .await?;
     }
     println!("[{}] Subscribed to orderbook.200.{}", source, symbol);
 
@@ -412,7 +443,10 @@ async fn connect_ws_with_reconnect(
             interval.tick().await;
             let ping_msg = serde_json::json!({"op": "ping"});
             let mut w = write_ping.lock().await;
-            if w.send(Message::Text(ping_msg.to_string().into())).await.is_err() {
+            if w.send(Message::Text(ping_msg.to_string().into()))
+                .await
+                .is_err()
+            {
                 eprintln!("[{}] Failed to send ping", source_ping);
                 break;
             }
@@ -545,7 +579,7 @@ mod tests {
 
         // Symmetrical gaps: 5 empty ticks then same liquidity on both sides
         add_ask(&mut state, 100.60, 500.0); // 5 ticks gap up
-        add_bid(&mut state, 99.50, 500.0);  // 5 ticks gap down
+        add_bid(&mut state, 99.50, 500.0); // 5 ticks gap down
 
         let bid = state.book.best_bid().unwrap();
         let ask = state.book.best_ask().unwrap();
@@ -556,7 +590,11 @@ mod tests {
         assert!(liq_up > 0);
         assert!(liq_dn > 0);
         // Balanced → score ≈ 0.5
-        assert!((score - 0.5).abs() < 0.01, "balanced book score should be ~0.5, got {}", score);
+        assert!(
+            (score - 0.5).abs() < 0.01,
+            "balanced book score should be ~0.5, got {}",
+            score
+        );
     }
 
     #[test]
@@ -569,13 +607,17 @@ mod tests {
 
         // Much more liquidity on the ask side beyond the gap
         add_ask(&mut state, 100.60, 10_000.0); // 5 ticks gap, heavy resistance
-        add_bid(&mut state, 99.50, 100.0);      // 5 ticks gap, light support
+        add_bid(&mut state, 99.50, 100.0); // 5 ticks gap, light support
 
         let bid = state.book.best_bid().unwrap();
         let ask = state.book.best_ask().unwrap();
         let (score, _, _, _, _) = state.calculate_gap_probability(bid, ask);
 
-        assert!(score > 0.5, "ask-heavy book should score > 0.5, got {}", score);
+        assert!(
+            score > 0.5,
+            "ask-heavy book should score > 0.5, got {}",
+            score
+        );
     }
 
     #[test]
@@ -586,14 +628,18 @@ mod tests {
         add_bid(&mut state, 100.00, 1.0);
         add_ask(&mut state, 100.10, 1.0);
 
-        add_ask(&mut state, 100.60, 100.0);     // light resistance
-        add_bid(&mut state, 99.50, 10_000.0);   // heavy support
+        add_ask(&mut state, 100.60, 100.0); // light resistance
+        add_bid(&mut state, 99.50, 10_000.0); // heavy support
 
         let bid = state.book.best_bid().unwrap();
         let ask = state.book.best_ask().unwrap();
         let (score, _, _, _, _) = state.calculate_gap_probability(bid, ask);
 
-        assert!(score < 0.5, "bid-heavy book should score < 0.5, got {}", score);
+        assert!(
+            score < 0.5,
+            "bid-heavy book should score < 0.5, got {}",
+            score
+        );
     }
 
     #[test]
