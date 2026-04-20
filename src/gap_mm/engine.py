@@ -91,6 +91,25 @@ def calculate_quotes_fast(
     Returns
     -------
     (bid_price, ask_price, bid_edge_ticks, ask_edge_ticks, spread_ticks)
+
+    NOTE — inventory control has been intentionally stripped out.
+    This function only skews quotes based on the gap-resistance alpha signal.
+    To avoid adverse selection and control position risk you should implement
+    your own inventory adjustment before calling this function, e.g.
+    Avellaneda-Stoikov reservation price:
+
+        reservation_mid = fair_mid + alpha_adjustment - gamma * sigma^2 * inventory
+
+    where:
+        fair_mid          = raw mid price
+        alpha_adjustment  = signal-derived short-term price prediction
+        gamma             = risk-aversion coefficient
+        sigma             = realized volatility
+        inventory         = current net position (positive = long, negative = short)
+
+    Pass the adjusted reservation_mid as ``mid_price`` to have the spread
+    automatically centred around a position-aware fair value, rather than the
+    raw exchange mid.
     """
     if confidence == CONF_HIGH or confidence == CONF_MED:
         if signal == SIGNAL_UP:

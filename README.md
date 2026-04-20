@@ -41,9 +41,38 @@ Bybit public WS
 
 ---
 
+## Inventory control — bring your own
+
+`calculate_quotes_fast` has **no inventory control**. It skews quotes purely based on the
+gap-resistance alpha signal and does not penalise a growing position. Running it as-is will
+expose you to adverse selection and unbounded inventory risk.
+
+To use this as a proper market-making strategy, compute a **reservation mid** that combines
+the alpha signal with an inventory penalty before calling `calculate_quotes_fast`:
+
+```
+reservation_mid = fair_mid + alpha_adjustment - gamma * sigma² * inventory
+```
+
+where:
+- `fair_mid` — raw exchange mid price
+- `alpha_adjustment` — your short-term price prediction (e.g. derived from the gap signal)
+- `gamma` — risk-aversion / inventory-penalty coefficient (tune to your position limit)
+- `sigma` — short-term realised volatility
+- `inventory` — current net position (positive = long, negative = short)
+
+Pass `reservation_mid` as the `mid_price` argument and the spread will automatically
+centre around an inventory-aware fair value instead of the raw mid.
+
+The canonical reference for this approach is **Avellaneda & Stoikov (2008)**,
+"High-frequency trading in a limit order book."
+
+---
+
 ## Known limitations / quirks
 
 - **No backtested edge.** The gap-probability signal is a microstructure heuristic. It has not been statistically validated. Treat this as a reference implementation, not a proven profitable strategy.
+- **No inventory control.** See the section above. You must implement your own reservation-price adjustment to run this safely in production.
 - **Bybit only.** The WS and REST code is Bybit-specific (v5 API).
 - **Tick size must match your symbol.** Pass `tick_size` both in `.env` and to `TradingNode.start_stream(tick_size=...)`. Default is `0.10` (BTCUSDT spot). Other symbols need their correct tick size.
 - **PostOnly orders only.** The bot never crosses the spread. If the market is too fast, orders are amended rather than re-submitted.
