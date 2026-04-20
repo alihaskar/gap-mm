@@ -62,8 +62,8 @@ Bybit public WS
 ## Installation
 
 ```bash
-# 1. Clone with submodules
-git clone --recursive https://github.com/alihaskar/gap-mm
+# 1. Clone
+git clone https://github.com/alihaskar/gap-mm
 cd gap-mm
 
 # 2. Install Python dependencies
@@ -159,6 +159,28 @@ Each callback receives a dict with:
 
 ---
 
+## Performance
+
+Measured on an AMD Ryzen 9 / Windows 11 machine against a localhost mock HTTP server
+(loopback RTT ≈ 50 µs). Run the benchmark yourself with:
+
+```bash
+poetry run python tests/benchmarks/bench_latency.py
+```
+
+| Segment | p50 | p99 | What it covers |
+|---|---|---|---|
+| Numba signal path | **200 ns** | 300 ns | `encode_signal` + `calculate_quotes_fast` |
+| Python tick dispatch | **300 ns** | 500 ns | dict unpack + Numba calls + price-change guard |
+| `reconcile()` roundtrip | **647 µs** | 901 µs | Python→Rust FFI + reqwest HTTP + JSON parse |
+| Full pipeline | **649 µs** | 901 µs | tick arrival → order on the wire |
+
+**Key takeaway:** The signal math is ~300 ns — effectively free. The bottleneck is the REST
+round-trip (~650 µs to localhost, +1–5 ms for a co-located exchange). Moving to WebSocket
+order placement would collapse this to the ~300 ns range.
+
+---
+
 ## Running tests
 
 ```bash
@@ -167,6 +189,9 @@ poetry run pytest tests/ -v
 
 # Rust unit tests
 cd rust_engine && cargo test
+
+# Latency benchmarks (prints report, no pass/fail)
+poetry run python tests/benchmarks/bench_latency.py
 ```
 
 ---
@@ -177,26 +202,26 @@ cd rust_engine && cargo test
 gap-mm/
 ├── src/
 │   └── gap_mm/
-│       ├── __init__.py      # public API
-│       ├── engine.py        # Numba JIT: signal encoding, quote calculation, P&L
-│       ├── live.py          # LiveTradingEngine
-│       └── __main__.py      # CLI entrypoint: python -m gap_mm
+│       ├── __init__.py           # public API
+│       ├── engine.py             # Numba JIT: signal encoding, quote calc, P&L
+│       ├── live.py               # LiveTradingEngine
+│       └── __main__.py           # CLI entrypoint: python -m gap_mm
 ├── rust_engine/
 │   └── src/
-│       ├── bybit.rs         # WS streaming, OrderBookState, gap analysis
-│       ├── execution.rs     # OMS/EMS: order state, reconciliation, position
-│       ├── private_ws.rs    # Private WS: fills
-│       ├── lib.rs           # PyO3 bindings
-│       └── main.rs          # Standalone binary (optional)
-├── OrderBook-rs/            # git submodule — lock-free L2 order book (MIT)
+│       ├── bybit.rs              # WS streaming, OrderBookState, gap analysis
+│       ├── execution.rs          # OMS/EMS: order state, reconciliation, position
+│       ├── private_ws.rs         # Private WS: fills
+│       ├── lib.rs                # PyO3 bindings
+│       └── main.rs               # Standalone binary (optional)
 ├── tests/
-│   ├── unit/                # Pure Python, no network
-│   └── integration/         # Requires rust_engine build; REST mocked
+│   ├── unit/                     # Pure Python, no network
+│   ├── integration/              # Requires rust_engine build; REST mocked
+│   └── benchmarks/               # Latency benchmark script
 ├── examples/
-│   └── minimal_stream.py    # Stream only, no orders
+│   └── minimal_stream.py         # Stream only, no orders
 ├── .env.example
 ├── pyproject.toml
-├── LICENSE                  # MIT
+├── LICENSE                       # MIT
 └── CONTRIBUTING.md
 ```
 
@@ -204,7 +229,8 @@ gap-mm/
 
 ## Attribution
 
-The order-book engine is [OrderBook-rs](https://github.com/joaquinbejar/OrderBook-rs) by Joaquín Béjar García (MIT license), included as a git submodule.
+The order-book engine uses [orderbook-rs](https://github.com/joaquinbejar/OrderBook-rs)
+by Joaquín Béjar García (MIT license), pulled from crates.io.
 
 ---
 
