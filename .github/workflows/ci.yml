@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.12", "3.13"]
+        # Python 3.14+ not yet supported: PyO3 0.21 caps at Python 3.13
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: latest
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install Python dependencies
+        run: poetry install --with dev
+
+      - name: Build Rust extension (release)
+        working-directory: rust_engine
+        run: poetry run maturin develop --release
+
+      # ── Rust checks ───────────────────────────────────────────────────────
+
+      - name: Rust format check
+        working-directory: rust_engine
+        run: cargo fmt --check
+
+      - name: Rust clippy
+        working-directory: rust_engine
+        run: cargo clippy -- -D warnings
+
+      - name: Rust unit tests (rust_engine)
+        working-directory: rust_engine
+        run: cargo test
+
+      # ── Python checks ─────────────────────────────────────────────────────
+
+      - name: Ruff lint
+        run: poetry run ruff check src/ tests/
+
+      - name: Ruff format check
+        run: poetry run ruff format --check src/ tests/
+
+      - name: pytest (unit + integration)
+        run: poetry run pytest tests/ -v --tb=short

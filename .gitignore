@@ -1,18 +1,36 @@
-*.env
+# Environment / secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+
+# Data exports
+*.csv
 *data/
 
 # Rust build artifacts
 rust_engine/target/
 rust_engine/Cargo.lock
+target/
+
+# Python compiled extension
+*.so
+*.pyd
+*.dll
 
 # Python artifacts
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Test / coverage
 .pytest_cache/
 .coverage
 htmlcov/
+.ruff_cache/
 
 # Virtual environments
 .venv/
@@ -30,7 +48,11 @@ ENV/
 .DS_Store
 Thumbs.db
 
-poetry.lock
-*.txt
+# Poetry
+# poetry.lock is intentionally excluded: wheel users need it,
+# but library consumers should resolve against their own env.
+# Uncomment the next line if you prefer to commit the lockfile:
+# !poetry.lock
 
-*.csv
+# Implementation notes / scratch files
+*.txt

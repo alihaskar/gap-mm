@@ -33,8 +33,15 @@ impl TradingNode {
         })
     }
 
-    fn start_stream(&self, py: Python, callback: PyObject, symbol: Option<String>) -> PyResult<()> {
+    fn start_stream(
+        &self,
+        py: Python,
+        callback: PyObject,
+        symbol: Option<String>,
+        tick_size: Option<f64>,
+    ) -> PyResult<()> {
         let symbol = symbol.unwrap_or_else(|| "BTCUSDT".to_string());
+        let tick_size = tick_size.unwrap_or(0.10);
         let runtime = self.runtime.clone();
         let is_running = self.is_running.clone();
 
@@ -61,10 +68,9 @@ impl TradingNode {
             runtime.block_on(async {
                 match start_bybit_streams(&symbol).await {
                     Ok(rx) => {
-                        // Process updates and call Python callback with enriched data
-                        process_orderbook_updates(rx, move |update| {
+                        process_orderbook_updates(rx, tick_size, move |update| {
                             Python::with_gil(|py| {
-                                let dict = PyDict::new_bound(py);
+                                let dict = PyDict::new(py);
                                 dict.set_item("symbol", &update.symbol).ok();
                                 dict.set_item("source", &update.source).ok();
                                 dict.set_item("bid", update.bid).ok();
@@ -76,7 +82,7 @@ impl TradingNode {
                                 dict.set_item("bid_depth_5", update.bid_depth_5).ok();
                                 dict.set_item("ask_depth_5", update.ask_depth_5).ok();
                                 dict.set_item("timestamp", update.timestamp).ok();
-                                dict.set_item("gap_prob_up", update.gap_prob_up).ok();
+                                dict.set_item("gap_prob_resistance_up", update.gap_prob_resistance_up).ok();
                                 dict.set_item("gap_distance_up", update.gap_distance_up).ok();
                                 dict.set_item("gap_distance_dn", update.gap_distance_dn).ok();
                                 dict.set_item("liquidity_up", update.liquidity_up).ok();
@@ -161,6 +167,7 @@ impl ExecutionNode {
         tick_size: Option<f64>,
         max_position: Option<f64>,
         min_order_size: Option<f64>,
+        api_base_url: Option<String>,
     ) -> PyResult<Self> {
         // Install ring crypto provider for rustls
         let _ = ring::default_provider().install_default();
@@ -170,8 +177,8 @@ impl ExecutionNode {
 
         let market_type = market_type.unwrap_or_else(|| "spot".to_string());
         let tick_size = tick_size.unwrap_or(0.10);
-        let max_position = max_position.unwrap_or(0.01);  // 0.01 BTC for spot
-        let min_order_size = min_order_size.unwrap_or(0.001);  // Min 0.001 BTC for spot
+        let max_position = max_position.unwrap_or(0.01);
+        let min_order_size = min_order_size.unwrap_or(0.001);
 
         let engine = ExecutionEngine::new(
             api_key.clone(),
@@ -181,6 +188,7 @@ impl ExecutionNode {
             tick_size,
             max_position,
             min_order_size,
+            api_base_url,
         );
 
         Ok(ExecutionNode {
@@ -226,7 +234,7 @@ impl ExecutionNode {
                         tokio::task::spawn_blocking(move || {
                             Python::with_gil(|py| {
                                 if let Some(cb) = fill_callback_clone.blocking_lock().as_ref() {
-                                    let dict = PyDict::new_bound(py);
+                                    let dict = PyDict::new(py);
                                     dict.set_item("symbol", &fill.symbol).ok();
                                     dict.set_item("order_id", &fill.order_id).ok();
                                     dict.set_item("side", &fill.side).ok();
@@ -239,7 +247,7 @@ impl ExecutionNode {
 
                                     // Add position data
                                     if let Some(pos) = position {
-                                        let pos_dict = PyDict::new_bound(py);
+                                        let pos_dict = PyDict::new(py);
                                         pos_dict.set_item("net_qty", pos.net_qty).ok();
                                         pos_dict.set_item("avg_entry_price", pos.avg_entry_price).ok();
                                         pos_dict.set_item("realized_pnl", pos.realized_pnl).ok();
@@ -265,33 +273,31 @@ impl ExecutionNode {
 
     /// Get current position
     fn get_position(&self, py: Python, symbol: Option<String>) -> PyResult<PyObject> {
+        let runtime = self.runtime.clone();
         let engine = self.engine.clone();
         let symbol = symbol.unwrap_or_else(|| "BTCUSDT".to_string());
 
         py.allow_threads(|| {
-            tokio::task::block_in_place(|| {
-                let handle = tokio::runtime::Handle::current();
-                handle.block_on(async {
-                    let engine_guard = engine.lock().await;
-                    let engine = engine_guard.as_ref()
-                        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
+            runtime.block_on(async {
+                let engine_guard = engine.lock().await;
+                let engine = engine_guard.as_ref()
+                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
 
-                    let position = engine.position_state.get_position(&symbol).await;
+                let position = engine.position_state.get_position(&symbol).await;
 
-                    Python::with_gil(|py| {
-                        if let Some(pos) = position {
-                            let dict = PyDict::new_bound(py);
-                            dict.set_item("symbol", &pos.symbol).ok();
-                            dict.set_item("net_qty", pos.net_qty).ok();
-                            dict.set_item("avg_entry_price", pos.avg_entry_price).ok();
-                            dict.set_item("total_buy_qty", pos.total_buy_qty).ok();
-                            dict.set_item("total_sell_qty", pos.total_sell_qty).ok();
-                            dict.set_item("realized_pnl", pos.realized_pnl).ok();
-                            Ok(dict.into())
-                        } else {
-                            Ok(py.None())
-                        }
-                    })
+                Python::with_gil(|py| {
+                    if let Some(pos) = position {
+                        let dict = PyDict::new(py);
+                        dict.set_item("symbol", &pos.symbol).ok();
+                        dict.set_item("net_qty", pos.net_qty).ok();
+                        dict.set_item("avg_entry_price", pos.avg_entry_price).ok();
+                        dict.set_item("total_buy_qty", pos.total_buy_qty).ok();
+                        dict.set_item("total_sell_qty", pos.total_sell_qty).ok();
+                        dict.set_item("realized_pnl", pos.realized_pnl).ok();
+                        Ok(dict.into())
+                    } else {
+                        Ok(py.None())
+                    }
                 })
             })
         })
@@ -299,56 +305,51 @@ impl ExecutionNode {
 
     /// Cancel an order by order ID
     fn cancel_order(&self, py: Python, symbol: String, order_id: String) -> PyResult<()> {
+        let runtime = self.runtime.clone();
         let engine = self.engine.clone();
 
         py.allow_threads(|| {
-            tokio::task::block_in_place(|| {
-                let handle = tokio::runtime::Handle::current();
-                handle.block_on(async {
-                    let engine_guard = engine.lock().await;
-                    let engine = engine_guard.as_ref()
-                        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
+            runtime.block_on(async {
+                let engine_guard = engine.lock().await;
+                let engine = engine_guard.as_ref()
+                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
 
-                    engine.auth.cancel_order(&symbol, &order_id)
-                        .await
-                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                engine.auth.cancel_order(&symbol, &order_id)
+                    .await
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-                    Ok(())
-                })
+                Ok(())
             })
         })
     }
 
     /// Reconcile orders based on target prices
     fn reconcile(&self, py: Python, target_bid: Option<f64>, target_ask: Option<f64>) -> PyResult<PyObject> {
+        let runtime = self.runtime.clone();
         let engine = self.engine.clone();
 
         py.allow_threads(|| {
-            // Use block_in_place to run blocking code within async context
-            tokio::task::block_in_place(|| {
-                let handle = tokio::runtime::Handle::current();
-                handle.block_on(async {
-                    let engine_guard = engine.lock().await;
-                    let engine = engine_guard.as_ref()
-                        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
+            runtime.block_on(async {
+                let engine_guard = engine.lock().await;
+                let engine = engine_guard.as_ref()
+                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
 
-                    let result = engine.reconcile_orders(target_bid, target_ask)
-                        .await
-                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                let result = engine.reconcile_orders(target_bid, target_ask)
+                    .await
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-                    Python::with_gil(|py| {
-                        let dict = PyDict::new_bound(py);
-                        
-                        if let Some(bid_action) = result.bid_action {
-                            dict.set_item("bid", action_to_dict(py, bid_action)).ok();
-                        }
-                        
-                        if let Some(ask_action) = result.ask_action {
-                            dict.set_item("ask", action_to_dict(py, ask_action)).ok();
-                        }
+                Python::with_gil(|py| {
+                    let dict = PyDict::new(py);
 
-                        Ok(dict.into())
-                    })
+                    if let Some(bid_action) = result.bid_action {
+                        dict.set_item("bid", action_to_dict(py, bid_action)).ok();
+                    }
+
+                    if let Some(ask_action) = result.ask_action {
+                        dict.set_item("ask", action_to_dict(py, ask_action)).ok();
+                    }
+
+                    Ok(dict.into())
                 })
             })
         })
@@ -385,7 +386,7 @@ impl ExecutionNode {
 }
 
 fn action_to_dict(py: Python, action: OrderAction) -> PyObject {
-    let dict = PyDict::new_bound(py);
+    let dict = PyDict::new(py);
     
     match action {
         OrderAction::Submitted { order_id, price, latency_ms } => {

@@ -260,10 +260,11 @@ pub struct BybitAuth {
     api_secret: String,
     client: reqwest::Client,
     market_type: String,  // "spot" or "linear"
+    base_url: String,
 }
 
 impl BybitAuth {
-    pub fn new(api_key: String, api_secret: String, market_type: String) -> Self {
+    pub fn new(api_key: String, api_secret: String, market_type: String, base_url: Option<String>) -> Self {
         let client = reqwest::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .pool_max_idle_per_host(10)
@@ -275,6 +276,7 @@ impl BybitAuth {
             api_secret,
             client,
             market_type,
+            base_url: base_url.unwrap_or_else(|| BYBIT_API_BASE.to_string()),
         }
     }
 
@@ -327,7 +329,7 @@ impl BybitAuth {
 
         let response = self
             .client
-            .post(format!("{}/v5/order/create", BYBIT_API_BASE))
+            .post(format!("{}/v5/order/create", self.base_url))
             .header("X-BAPI-API-KEY", &self.api_key)
             .header("X-BAPI-TIMESTAMP", timestamp.to_string())
             .header("X-BAPI-SIGN", signature)
@@ -386,7 +388,7 @@ impl BybitAuth {
 
         let response = self
             .client
-            .post(format!("{}/v5/order/amend", BYBIT_API_BASE))
+            .post(format!("{}/v5/order/amend", self.base_url))
             .header("X-BAPI-API-KEY", &self.api_key)
             .header("X-BAPI-TIMESTAMP", timestamp.to_string())
             .header("X-BAPI-SIGN", signature)
@@ -430,7 +432,7 @@ impl BybitAuth {
 
         let response = self
             .client
-            .post(format!("{}/v5/order/cancel", BYBIT_API_BASE))
+            .post(format!("{}/v5/order/cancel", self.base_url))
             .header("X-BAPI-API-KEY", &self.api_key)
             .header("X-BAPI-TIMESTAMP", timestamp.to_string())
             .header("X-BAPI-SIGN", signature)
@@ -467,7 +469,7 @@ impl BybitAuth {
 
         let response = self
             .client
-            .get(format!("{}/v5/order/realtime?{}", BYBIT_API_BASE, params))
+            .get(format!("{}/v5/order/realtime?{}", self.base_url, params))
             .header("X-BAPI-API-KEY", &self.api_key)
             .header("X-BAPI-TIMESTAMP", timestamp.to_string())
             .header("X-BAPI-SIGN", signature)
@@ -577,9 +579,10 @@ impl ExecutionEngine {
         tick_size: f64,
         max_position: f64,
         min_order_size: f64,
+        api_base_url: Option<String>,
     ) -> Self {
         Self {
-            auth: Arc::new(BybitAuth::new(api_key, api_secret, market_type)),
+            auth: Arc::new(BybitAuth::new(api_key, api_secret, market_type, api_base_url)),
             order_state: Arc::new(OrderState::new()),
             position_state: Arc::new(PositionState::new()),
             symbol,
