@@ -61,11 +61,11 @@ def exec_node_factory(httpserver):
 # ── tests ─────────────────────────────────────────────────────────────────────
 
 class TestReconcileSubmit:
-    """First reconcile: no working orders → submit."""
+    """First reconcile: no working orders → submit both sides concurrently."""
 
     def test_submit_bid_and_ask(self, exec_node_factory, httpserver):
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-BID-001"))
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-ASK-001"))
+        # Bid and ask arrive concurrently — use unordered persistent handler
+        httpserver.expect_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-001"))
 
         node = exec_node_factory()
         result = node.reconcile(target_bid=89_000.0, target_ask=89_010.0)
@@ -77,8 +77,7 @@ class TestReconcileNoChange:
     """Second reconcile with same prices → no_change on both sides."""
 
     def test_no_change_after_submit(self, exec_node_factory, httpserver):
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-001"))
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-002"))
+        httpserver.expect_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-001"))
 
         node = exec_node_factory()
         node.reconcile(target_bid=89_000.0, target_ask=89_010.0)
@@ -94,7 +93,7 @@ class TestReconcileSkippedAtMaxPosition:
     """Reconcile with target_bid=None → bid side is skipped."""
 
     def test_bid_none_skips_bid_side(self, exec_node_factory, httpserver):
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-ASK-ONLY"))
+        httpserver.expect_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-ASK-ONLY"))
 
         node = exec_node_factory()
         result = node.reconcile(target_bid=None, target_ask=89_010.0)
@@ -102,7 +101,7 @@ class TestReconcileSkippedAtMaxPosition:
         assert "bid" not in result
 
     def test_ask_none_skips_ask_side(self, exec_node_factory, httpserver):
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-BID-ONLY"))
+        httpserver.expect_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-BID-ONLY"))
 
         node = exec_node_factory()
         result = node.reconcile(target_bid=89_000.0, target_ask=None)
@@ -114,10 +113,9 @@ class TestReconcileAmend:
     """After a submit, changing target price triggers an amend."""
 
     def test_amend_on_price_change(self, exec_node_factory, httpserver):
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("BID-001"))
-        httpserver.expect_ordered_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ASK-001"))
-        httpserver.expect_ordered_request("/v5/order/amend", method="POST").respond_with_json(_amend_ok("BID-001"))
-        httpserver.expect_ordered_request("/v5/order/amend", method="POST").respond_with_json(_amend_ok("ASK-001"))
+        # Both creates and both amends arrive concurrently — use unordered handlers
+        httpserver.expect_request("/v5/order/create", method="POST").respond_with_json(_submit_ok("ORDER-001"))
+        httpserver.expect_request("/v5/order/amend", method="POST").respond_with_json(_amend_ok("ORDER-001"))
 
         node = exec_node_factory()
         node.reconcile(target_bid=89_000.0, target_ask=89_010.0)

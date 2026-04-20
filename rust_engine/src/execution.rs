@@ -1,9 +1,8 @@
 use anyhow::{anyhow, Result};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -67,73 +66,57 @@ pub struct Order {
     pub updated_at: u64,
 }
 
-/// Dual-state architecture
+/// Dual-state architecture — lock-free via DashMap
 #[derive(Debug)]
 pub struct OrderState {
     /// Internal optimistic state (what we just did)
-    internal: RwLock<HashMap<String, Order>>,
+    internal: DashMap<String, Order>,
     /// Exchange confirmed state (REST + WS truth)
-    exchange: RwLock<HashMap<String, Order>>,
+    exchange: DashMap<String, Order>,
 }
 
 impl OrderState {
     pub fn new() -> Self {
         Self {
-            internal: RwLock::new(HashMap::new()),
-            exchange: RwLock::new(HashMap::new()),
+            internal: DashMap::new(),
+            exchange: DashMap::new(),
         }
     }
 
-    /// Add order to internal state (optimistic)
-    pub async fn add_internal(&self, order: Order) {
-        let mut internal = self.internal.write().await;
-        internal.insert(order.client_order_id.clone(), order);
+    pub fn add_internal(&self, order: Order) {
+        self.internal.insert(order.client_order_id.clone(), order);
     }
 
-    /// Update exchange state (confirmed by REST or WS)
-    pub async fn update_exchange(&self, order: Order) {
-        let mut exchange = self.exchange.write().await;
-        let mut internal = self.internal.write().await;
-        
-        // Update exchange state
-        exchange.insert(order.client_order_id.clone(), order.clone());
-        
-        // Sync internal state
-        internal.insert(order.client_order_id.clone(), order);
+    pub fn update_exchange(&self, order: Order) {
+        self.exchange.insert(order.client_order_id.clone(), order.clone());
+        self.internal.insert(order.client_order_id.clone(), order);
     }
 
-    /// Get active orders (from exchange state)
-    pub async fn get_active_orders(&self, symbol: &str, side: Option<OrderSide>) -> Vec<Order> {
-        let exchange = self.exchange.read().await;
-        exchange
-            .values()
-            .filter(|o| {
+    pub fn get_active_orders(&self, symbol: &str, side: Option<OrderSide>) -> Vec<Order> {
+        self.exchange
+            .iter()
+            .filter(|r| {
+                let o = r.value();
                 o.symbol == symbol
                     && matches!(o.status, OrderStatus::New | OrderStatus::PartiallyFilled)
                     && side.map_or(true, |s| o.side == s)
             })
-            .cloned()
+            .map(|r| r.value().clone())
             .collect()
     }
 
-    /// Check if order exists in internal state (prevent double submission)
-    pub async fn has_pending_order(&self, symbol: &str, side: OrderSide) -> bool {
-        let internal = self.internal.read().await;
-        internal.values().any(|o| {
+    pub fn has_pending_order(&self, symbol: &str, side: OrderSide) -> bool {
+        self.internal.iter().any(|r| {
+            let o = r.value();
             o.symbol == symbol
                 && o.side == side
                 && matches!(o.status, OrderStatus::Pending | OrderStatus::New)
         })
     }
 
-    /// Remove order from both states (for cleanup after errors)
-    pub async fn remove_order(&self, side: OrderSide) {
-        let mut internal = self.internal.write().await;
-        let mut exchange = self.exchange.write().await;
-        
-        // Remove all orders for this side
-        internal.retain(|_, o| o.side != side);
-        exchange.retain(|_, o| o.side != side);
+    pub fn remove_order(&self, side: OrderSide) {
+        self.internal.retain(|_, o| o.side != side);
+        self.exchange.retain(|_, o| o.side != side);
     }
 }
 
@@ -156,31 +139,28 @@ pub struct Position {
 
 #[derive(Debug)]
 pub struct PositionState {
-    positions: RwLock<HashMap<String, Position>>,
+    positions: DashMap<String, Position>,
 }
 
 impl PositionState {
     pub fn new() -> Self {
         Self {
-            positions: RwLock::new(HashMap::new()),
+            positions: DashMap::new(),
         }
     }
 
-    pub async fn get_position(&self, symbol: &str) -> Option<Position> {
-        let positions = self.positions.read().await;
-        positions.get(symbol).cloned()
+    pub fn get_position(&self, symbol: &str) -> Option<Position> {
+        self.positions.get(symbol).map(|r| r.value().clone())
     }
 
-    pub async fn update_position(&self, position: Position) {
-        let mut positions = self.positions.write().await;
-        positions.insert(position.symbol.clone(), position);
+    pub fn update_position(&self, position: Position) {
+        self.positions.insert(position.symbol.clone(), position);
     }
 
-    /// Process a fill event and update position
-    pub async fn process_fill(&self, fill: &FillEvent) {
-        let mut positions = self.positions.write().await;
-        
-        let position = positions.entry(fill.symbol.clone()).or_insert_with(|| Position {
+    pub fn process_fill(&self, fill: &FillEvent) {
+        let fill_value = fill.fill_price * fill.fill_qty;
+
+        let mut position = self.positions.entry(fill.symbol.clone()).or_insert_with(|| Position {
             symbol: fill.symbol.clone(),
             net_qty: 0.0,
             avg_entry_price: 0.0,
@@ -192,18 +172,12 @@ impl PositionState {
             last_update: fill.timestamp,
         });
 
-        let fill_value = fill.fill_price * fill.fill_qty;
-
         if fill.side == "Buy" {
-            // Buying
             if position.net_qty < 0.0 {
-                // Closing short position - realize P&L
                 let closing_qty = fill.fill_qty.min(position.net_qty.abs());
                 let realized_pnl = (position.avg_entry_price - fill.fill_price) * closing_qty;
                 position.realized_pnl += realized_pnl;
-                
                 if fill.fill_qty > closing_qty {
-                    // Flip to long
                     let remaining_qty = fill.fill_qty - closing_qty;
                     position.net_qty = remaining_qty;
                     position.avg_entry_price = fill.fill_price;
@@ -211,25 +185,18 @@ impl PositionState {
                     position.net_qty += fill.fill_qty;
                 }
             } else {
-                // Adding to long or opening long
                 let total_value = position.avg_entry_price * position.net_qty + fill_value;
                 position.net_qty += fill.fill_qty;
                 position.avg_entry_price = total_value / position.net_qty;
             }
-            
             position.total_buy_qty += fill.fill_qty;
             position.total_buy_value += fill_value;
-            
         } else {
-            // Selling
             if position.net_qty > 0.0 {
-                // Closing long position - realize P&L
                 let closing_qty = fill.fill_qty.min(position.net_qty);
                 let realized_pnl = (fill.fill_price - position.avg_entry_price) * closing_qty;
                 position.realized_pnl += realized_pnl;
-                
                 if fill.fill_qty > closing_qty {
-                    // Flip to short
                     let remaining_qty = fill.fill_qty - closing_qty;
                     position.net_qty = -remaining_qty;
                     position.avg_entry_price = fill.fill_price;
@@ -237,12 +204,10 @@ impl PositionState {
                     position.net_qty -= fill.fill_qty;
                 }
             } else {
-                // Adding to short or opening short
                 let total_value = position.avg_entry_price * position.net_qty.abs() + fill_value;
                 position.net_qty -= fill.fill_qty;
                 position.avg_entry_price = total_value / position.net_qty.abs();
             }
-            
             position.total_sell_qty += fill.fill_qty;
             position.total_sell_value += fill_value;
         }
@@ -592,36 +557,31 @@ impl ExecutionEngine {
         }
     }
 
-    /// Core reconciliation logic: compare target prices with existing orders
+    /// Core reconciliation logic: submit bid and ask concurrently
     pub async fn reconcile_orders(
         &self,
         target_bid: Option<f64>,
         target_ask: Option<f64>,
     ) -> Result<ReconcileResult> {
+        let bid_fut = async {
+            match target_bid {
+                Some(p) => Some(self.reconcile_side(OrderSide::Buy, p).await),
+                None => None,
+            }
+        };
+        let ask_fut = async {
+            match target_ask {
+                Some(p) => Some(self.reconcile_side(OrderSide::Sell, p).await),
+                None => None,
+            }
+        };
+        let (bid_res, ask_res) = tokio::join!(bid_fut, ask_fut);
+
         let mut result = ReconcileResult::default();
-
-        // Process bid side - don't fail entire reconcile if one side has insufficient balance
-        if let Some(bid_price) = target_bid {
-            match self.reconcile_side(OrderSide::Buy, bid_price).await {
-                Ok(action) => result.bid_action = Some(action),
-                Err(e) => {
-                    // Log but continue - other side might work (e.g., insufficient USDT but have BTC)
-                    eprintln!("BID reconcile failed: {}", e);
-                }
-            }
-        }
-
-        // Process ask side - independent of bid side
-        if let Some(ask_price) = target_ask {
-            match self.reconcile_side(OrderSide::Sell, ask_price).await {
-                Ok(action) => result.ask_action = Some(action),
-                Err(e) => {
-                    // Log but continue - other side might work (e.g., insufficient BTC but have USDT)
-                    eprintln!("ASK reconcile failed: {}", e);
-                }
-            }
-        }
-
+        if let Some(Ok(a)) = bid_res { result.bid_action = Some(a); }
+        else if let Some(Err(e)) = bid_res { eprintln!("BID reconcile failed: {}", e); }
+        if let Some(Ok(a)) = ask_res { result.ask_action = Some(a); }
+        else if let Some(Err(e)) = ask_res { eprintln!("ASK reconcile failed: {}", e); }
         Ok(result)
     }
 
@@ -631,7 +591,7 @@ impl ExecutionEngine {
         let target_price = self.round_to_tick(target_price);
 
         // Check position limits - be smart about which side to block
-        let position = self.position_state.get_position(&self.symbol).await;
+        let position = self.position_state.get_position(&self.symbol);
         let current_position = position.as_ref().map(|p| p.net_qty).unwrap_or(0.0);
 
         // If at max LONG position, only allow SELL (to reduce position)
@@ -649,12 +609,12 @@ impl ExecutionEngine {
         }
 
         // Get active orders for this side
-        let active_orders = self.order_state.get_active_orders(&self.symbol, Some(side)).await;
+        let active_orders = self.order_state.get_active_orders(&self.symbol, Some(side));
 
         match active_orders.first() {
             None => {
                 // No order exists -> Submit new
-                if self.order_state.has_pending_order(&self.symbol, side).await {
+                if self.order_state.has_pending_order(&self.symbol, side) {
                     return Ok(OrderAction::Skipped {
                         reason: "Order already pending".to_string(),
                     });
@@ -702,8 +662,8 @@ impl ExecutionEngine {
                 confirmed_order.status = OrderStatus::New;
                 confirmed_order.updated_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
                 
-                self.order_state.add_internal(confirmed_order.clone()).await;
-                self.order_state.update_exchange(confirmed_order).await;
+                self.order_state.add_internal(confirmed_order.clone());
+                self.order_state.update_exchange(confirmed_order);
 
                 Ok(OrderAction::Submitted {
                     order_id: response.order_id,
@@ -740,7 +700,7 @@ impl ExecutionEngine {
                             let mut updated_order = existing_order.clone();
                             updated_order.price = target_price;
                             updated_order.updated_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
-                            self.order_state.update_exchange(updated_order).await;
+                            self.order_state.update_exchange(updated_order);
 
                             Ok(OrderAction::Amended {
                                 order_id: resp.order_id,
@@ -754,7 +714,7 @@ impl ExecutionEngine {
                             let err_msg = e.to_string();
                             if err_msg.contains("170213") || err_msg.contains("Order does not exist") {
                                 eprintln!("Order {} doesn't exist on exchange, clearing and resubmitting", order_id);
-                                self.order_state.remove_order(side).await;
+                                self.order_state.remove_order(side);
                                 // Return error to trigger resubmit on next reconcile
                                 Err(e)
                             } else {
@@ -805,7 +765,7 @@ impl ExecutionEngine {
                 updated_at: order_info.updated_time.parse().unwrap_or(0),
             };
 
-            self.order_state.update_exchange(order).await;
+            self.order_state.update_exchange(order);
         }
 
         Ok(())

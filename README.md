@@ -161,23 +161,36 @@ Each callback receives a dict with:
 
 ## Performance
 
-Measured on an AMD Ryzen 9 / Windows 11 machine against a localhost mock HTTP server
-(loopback RTT ≈ 50 µs). Run the benchmark yourself with:
+Measured on an AMD Ryzen 9 7945HX (24 cores) / Windows 11 machine against a localhost mock
+HTTP server (loopback RTT ≈ 50 µs). Run the benchmark yourself with:
 
 ```bash
 poetry run python tests/benchmarks/bench_latency.py
 ```
 
+### After: parallel submit + DashMap + CPU pinning
+
 | Segment | p50 | p99 | What it covers |
 |---|---|---|---|
 | Numba signal path | **200 ns** | 300 ns | `encode_signal` + `calculate_quotes_fast` |
 | Python tick dispatch | **300 ns** | 500 ns | dict unpack + Numba calls + price-change guard |
-| `reconcile()` roundtrip | **647 µs** | 901 µs | Python→Rust FFI + reqwest HTTP + JSON parse |
-| Full pipeline | **649 µs** | 901 µs | tick arrival → order on the wire |
+| `reconcile()` roundtrip | **432 µs** | ~900 µs | Python→Rust FFI + 2× concurrent reqwest HTTP + JSON parse |
+| Full pipeline | **438 µs** | ~900 µs | tick arrival → both orders on the wire |
+
+### Baseline (sequential submit)
+
+| Segment | p50 | p99 |
+|---|---|---|
+| `reconcile()` roundtrip | 647 µs | 901 µs |
+| Full pipeline | 649 µs | 901 µs |
+
+**What changed:**
+- `reconcile_orders` now fires bid and ask via `tokio::join!` — both HTTP calls in-flight simultaneously, cutting median latency ~33 % (647 µs → 432 µs).
+- `OrderState` / `PositionState` converted from `RwLock<HashMap>` to `DashMap` — removes async lock contention when both sides update concurrently.
+- Tokio worker threads auto-pinned to the last 2 physical cores at startup (`[gap-mm] runtime 'exec' pinning workers to cores [23, 22]`), reducing scheduling jitter.
 
 **Key takeaway:** The signal math is ~300 ns — effectively free. The bottleneck is the REST
-round-trip (~650 µs to localhost, +1–5 ms for a co-located exchange). Moving to WebSocket
-order placement would collapse this to the ~300 ns range.
+round-trip. Moving to WebSocket order placement would collapse end-to-end latency to the ~300 ns range.
 
 ---
 

@@ -8,8 +8,29 @@ use private_ws::start_private_stream;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rustls::crypto::ring;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+fn build_pinned_runtime(name: &str) -> std::io::Result<tokio::runtime::Runtime> {
+    let cores = core_affinity::get_core_ids().unwrap_or_default();
+    let total = num_cpus::get_physical();
+    let pin_ids: Vec<_> = cores.into_iter().rev().take(2).collect();
+    let ids: Vec<_> = pin_ids.iter().map(|c| c.id).collect();
+    eprintln!("[gap-mm] runtime '{}' pinning workers to cores {:?} (of {} physical)", name, ids, total);
+
+    let next = Arc::new(AtomicUsize::new(0));
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(pin_ids.len().max(1))
+        .enable_all()
+        .thread_name(format!("gap-mm-{}", name))
+        .on_thread_start(move || {
+            if pin_ids.is_empty() { return; }
+            let i = next.fetch_add(1, AtomicOrdering::Relaxed) % pin_ids.len();
+            core_affinity::set_for_current(pin_ids[i]);
+        })
+        .build()
+}
 
 #[pyclass]
 struct TradingNode {
@@ -24,7 +45,7 @@ impl TradingNode {
         // Install ring crypto provider for rustls
         let _ = ring::default_provider().install_default();
 
-        let runtime = tokio::runtime::Runtime::new()
+        let runtime = build_pinned_runtime("stream")
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         Ok(TradingNode {
@@ -172,7 +193,7 @@ impl ExecutionNode {
         // Install ring crypto provider for rustls
         let _ = ring::default_provider().install_default();
 
-        let runtime = tokio::runtime::Runtime::new()
+        let runtime = build_pinned_runtime("exec")
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         let market_type = market_type.unwrap_or_else(|| "spot".to_string());
@@ -223,8 +244,8 @@ impl ExecutionNode {
                     while let Some(fill) = rx.recv().await {
                         // Update position and get the updated position
                         let position = if let Some(eng) = engine.lock().await.as_ref() {
-                            eng.position_state.process_fill(&fill).await;
-                            eng.position_state.get_position(&fill.symbol).await
+                            eng.position_state.process_fill(&fill);
+                            eng.position_state.get_position(&fill.symbol)
                         } else {
                             None
                         };
@@ -283,7 +304,7 @@ impl ExecutionNode {
                 let engine = engine_guard.as_ref()
                     .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Engine not initialized"))?;
 
-                let position = engine.position_state.get_position(&symbol).await;
+                let position = engine.position_state.get_position(&symbol);
 
                 Python::with_gil(|py| {
                     if let Some(pos) = position {
