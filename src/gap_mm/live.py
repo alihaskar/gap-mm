@@ -12,14 +12,13 @@ WARNING: This places REAL ORDERS on the exchange.
 import time
 from datetime import datetime
 
-from rust_engine import TradingNode, ExecutionNode
-
 from gap_mm.engine import (
     calculate_quotes_fast,
-    encode_signal,
-    decode_signal,
     decode_confidence,
+    decode_signal,
+    encode_signal,
 )
+from rust_engine import ExecutionNode, TradingNode
 
 
 class LiveTradingEngine:
@@ -70,9 +69,9 @@ class LiveTradingEngine:
         """Callback invoked by the private WebSocket on each execution report."""
         self.total_fills += 1
 
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"  FILL #{self.total_fills}")
-        print(f"  {'='*80}")
+        print(f"  {'=' * 80}")
         print(f"  Symbol:    {fill['symbol']}")
         print(f"  Side:      {fill['side']}")
         print(f"  Fill:      {fill['fill_price']:.2f} x {fill['fill_qty']:.6f}")
@@ -89,18 +88,22 @@ class LiveTradingEngine:
             print(f"  Avg entry:    {pos['avg_entry_price']:.2f}")
             print(f"  Realized P&L: {pos['realized_pnl']:+.2f} USDT")
 
-        print(f"  {'='*80}\n")
+        print(f"  {'=' * 80}\n")
 
     def _should_update(self, new_bid: float, new_ask: float, now: float) -> bool:
         """Return True only when target prices changed (and optional throttle cleared)."""
         if self.last_bid_price is None or self.last_ask_price is None:
             return True
         half_tick = self.tick_size / 2.0
-        if abs(new_bid - self.last_bid_price) <= half_tick and abs(new_ask - self.last_ask_price) <= half_tick:
+        if (
+            abs(new_bid - self.last_bid_price) <= half_tick
+            and abs(new_ask - self.last_ask_price) <= half_tick
+        ):
             return False
-        if self.min_update_interval > 0 and (now - self.last_execution_time) < self.min_update_interval:
-            return False
-        return True
+        return not (
+            self.min_update_interval > 0
+            and now - self.last_execution_time < self.min_update_interval
+        )
 
     def on_market_update(self, data: dict) -> None:
         """Main hot-path callback: receives market data, calculates and reconciles quotes."""
@@ -161,33 +164,46 @@ class LiveTradingEngine:
 
         except Exception as exc:
             import traceback
+
             print(f"ERROR in market update callback: {exc}")
             traceback.print_exc()
 
     def _print_action(self, side: str, action: dict) -> None:
         t = action.get("type")
         if t == "submitted":
-            print(f"    + {side} SUBMITTED @ {action['price']:.2f} | ID: {action['order_id'][:8]}... | {action.get('latency_ms', 0)}ms")
+            print(
+                f"    + {side} SUBMITTED @ {action['price']:.2f} | ID: {action['order_id'][:8]}... | {action.get('latency_ms', 0)}ms"
+            )
         elif t == "amended":
-            print(f"    ~ {side} AMENDED: {action['old_price']:.2f} -> {action['new_price']:.2f} | ID: {action['order_id'][:8]}... | {action.get('latency_ms', 0)}ms")
+            print(
+                f"    ~ {side} AMENDED: {action['old_price']:.2f} -> {action['new_price']:.2f} | ID: {action['order_id'][:8]}... | {action.get('latency_ms', 0)}ms"
+            )
         elif t == "no_change":
-            print(f"    = {side} UNCHANGED @ {action['price']:.2f} | ID: {action['order_id'][:8]}...")
+            print(
+                f"    = {side} UNCHANGED @ {action['price']:.2f} | ID: {action['order_id'][:8]}..."
+            )
         elif t == "skipped":
             print(f"    - {side} SKIPPED: {action['reason']}")
 
     def _print_stats(self) -> None:
         elapsed = time.time() - self.start_time
-        elapsed_min = max(elapsed / 60.0, 1e-9)
-        print(f"\n{'='*80}")
-        print(f"  STATS  runtime={elapsed:.1f}s  updates={self.total_updates}  executions={self.total_executions}  fills={self.total_fills}")
+        max(elapsed / 60.0, 1e-9)
+        print(f"\n{'=' * 80}")
+        print(
+            f"  STATS  runtime={elapsed:.1f}s  updates={self.total_updates}  executions={self.total_executions}  fills={self.total_fills}"
+        )
         print(f"  Last signal: {self.last_signal} ({self.last_confidence})")
         if self.last_bid_price and self.last_ask_price:
-            print(f"  Current quotes: BID {self.last_bid_price:.2f} | ASK {self.last_ask_price:.2f}")
+            print(
+                f"  Current quotes: BID {self.last_bid_price:.2f} | ASK {self.last_ask_price:.2f}"
+            )
         if self.current_position:
             net = self.current_position["net_qty"]
             direction = "LONG" if net > 0 else "SHORT" if net < 0 else "FLAT"
-            print(f"  Position: {net:+.6f} ({direction})  P&L: {self.current_position['realized_pnl']:+.2f} USDT")
-        print(f"{'='*80}\n")
+            print(
+                f"  Position: {net:+.6f} ({direction})  P&L: {self.current_position['realized_pnl']:+.2f} USDT"
+            )
+        print(f"{'=' * 80}\n")
 
     def start(self) -> None:
         """Start the live trading engine (blocks until interrupted)."""

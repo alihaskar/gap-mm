@@ -21,7 +21,6 @@ All core calculations are compiled to machine code for minimal latency.
 """
 
 from numba import jit
-import numpy as np
 
 # Signal direction constants (numba nopython mode does not support strings)
 SIGNAL_UP = 1
@@ -111,7 +110,7 @@ def calculate_quotes_fast(
     automatically centred around a position-aware fair value, rather than the
     raw exchange mid.
     """
-    if confidence == CONF_HIGH or confidence == CONF_MED:
+    if confidence in (CONF_HIGH, CONF_MED):
         if signal == SIGNAL_UP:
             bid_edge = 1.0
             ask_edge = 100.0
@@ -200,6 +199,7 @@ def calculate_statistics(
 
 
 # ── Python-layer helpers (not JIT-compiled) ──────────────────────────────────
+
 
 def decode_signal(signal_code: int) -> tuple[str, str]:
     """Return (text, emoji_text) for a signal code."""

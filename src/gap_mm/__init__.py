@@ -7,18 +7,18 @@ Core modules:
 """
 
 from gap_mm.engine import (
-    encode_signal,
-    calculate_quotes_fast,
-    calculate_pnl_fast,
-    check_signal_correct,
-    decode_signal,
-    decode_confidence,
-    SIGNAL_UP,
+    CONF_HIGH,
+    CONF_LOW,
+    CONF_MED,
     SIGNAL_DOWN,
     SIGNAL_NEUTRAL,
-    CONF_HIGH,
-    CONF_MED,
-    CONF_LOW,
+    SIGNAL_UP,
+    calculate_pnl_fast,
+    calculate_quotes_fast,
+    check_signal_correct,
+    decode_confidence,
+    decode_signal,
+    encode_signal,
 )
 from gap_mm.live import LiveTradingEngine
 

@@ -22,7 +22,6 @@ Measures three segments of the tick-to-order pipeline:
 """
 
 import json
-import socket
 import statistics
 import sys
 import threading
@@ -38,23 +37,29 @@ except ImportError:
 try:
     from rust_engine import ExecutionNode
 except ImportError:
-    sys.exit("ERROR: rust_engine not built. Run `poetry run maturin develop --manifest-path rust_engine/Cargo.toml`")
+    sys.exit(
+        "ERROR: rust_engine not built. Run `poetry run maturin develop --manifest-path rust_engine/Cargo.toml`"
+    )
 
 # ── constants ─────────────────────────────────────────────────────────────────
-MID  = 90_000.0
+MID = 90_000.0
 TICK = 0.10
 
-N_WARMUP      =   500
+N_WARMUP = 500
 N_BENCH_NUMBA = 5_000
-N_BENCH_HTTP  =   500   # each call → up to 2 HTTP round-trips
+N_BENCH_HTTP = 500  # each call → up to 2 HTTP round-trips
 
-SUBMIT_BODY = json.dumps({
-    "retCode": 0, "retMsg": "OK",
-    "result": {"orderId": "BENCH-001", "orderLinkId": "link-001"},
-}).encode()
+SUBMIT_BODY = json.dumps(
+    {
+        "retCode": 0,
+        "retMsg": "OK",
+        "result": {"orderId": "BENCH-001", "orderLinkId": "link-001"},
+    }
+).encode()
 
 
 # ── mock HTTP server ──────────────────────────────────────────────────────────
+
 
 class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -83,16 +88,17 @@ def _start_mock_server() -> tuple[ThreadingHTTPServer, str]:
 
 # ── stats / reporting ─────────────────────────────────────────────────────────
 
+
 def _stats(samples_ns: list[int]) -> dict:
     s = sorted(samples_ns)
     n = len(s)
     return {
-        "n":    n,
-        "min":  s[0],
-        "p50":  s[n // 2],
-        "p95":  s[int(n * 0.95)],
-        "p99":  s[int(n * 0.99)],
-        "max":  s[-1],
+        "n": n,
+        "min": s[0],
+        "p50": s[n // 2],
+        "p95": s[int(n * 0.95)],
+        "p99": s[int(n * 0.99)],
+        "max": s[-1],
         "mean": int(statistics.mean(s)),
     }
 
@@ -119,6 +125,7 @@ def _report(name: str, st: dict) -> None:
 
 # ── warmup ────────────────────────────────────────────────────────────────────
 
+
 def _warmup():
     print(f"Warming up Numba ({N_WARMUP} iters)...", end=" ", flush=True)
     for _ in range(N_WARMUP):
@@ -128,6 +135,7 @@ def _warmup():
 
 
 # ── segment 1 ─────────────────────────────────────────────────────────────────
+
 
 def bench_segment1():
     samples = []
@@ -141,6 +149,7 @@ def bench_segment1():
 
 
 # ── segment 2 ─────────────────────────────────────────────────────────────────
+
 
 def bench_segment2():
     last_bid: float | None = None
@@ -174,6 +183,7 @@ def bench_segment2():
 
 # ── segment 3 ─────────────────────────────────────────────────────────────────
 
+
 def bench_segment3(base_url: str):
     node = ExecutionNode(
         api_key="bench-key",
@@ -204,6 +214,7 @@ def bench_segment3(base_url: str):
 
 # ── full pipeline ─────────────────────────────────────────────────────────────
 
+
 def bench_full_pipeline(base_url: str):
     node = ExecutionNode(
         api_key="bench-key",
@@ -219,7 +230,7 @@ def bench_full_pipeline(base_url: str):
 
     samples = []
     for i in range(N_BENCH_HTTP):
-        mid   = MID + (i % 100) * TICK
+        mid = MID + (i % 100) * TICK
         score = 0.82 if i % 2 == 0 else 0.18
         t0 = time.perf_counter_ns()
         sig, conf = encode_signal(score)
@@ -241,7 +252,7 @@ if __name__ == "__main__":
     bench_segment1()
     bench_segment2()
 
-    print(f"\nStarting localhost mock HTTP server...", end=" ", flush=True)
+    print("\nStarting localhost mock HTTP server...", end=" ", flush=True)
     server, base_url = _start_mock_server()
     print(f"listening on {base_url}")
 

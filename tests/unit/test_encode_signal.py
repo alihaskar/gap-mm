@@ -6,14 +6,15 @@ Numba JIT is warmed up once per session via the autouse fixture.
 """
 
 import pytest
+
 from gap_mm.engine import (
-    encode_signal,
-    SIGNAL_UP,
+    CONF_HIGH,
+    CONF_LOW,
+    CONF_MED,
     SIGNAL_DOWN,
     SIGNAL_NEUTRAL,
-    CONF_HIGH,
-    CONF_MED,
-    CONF_LOW,
+    SIGNAL_UP,
+    encode_signal,
 )
 
 

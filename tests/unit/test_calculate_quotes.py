@@ -3,15 +3,15 @@ Unit tests for gap_mm.engine.calculate_quotes_fast.
 """
 
 import pytest
+
 from gap_mm.engine import (
-    calculate_quotes_fast,
-    encode_signal,
-    SIGNAL_UP,
+    CONF_HIGH,
+    CONF_LOW,
+    CONF_MED,
     SIGNAL_DOWN,
     SIGNAL_NEUTRAL,
-    CONF_HIGH,
-    CONF_MED,
-    CONF_LOW,
+    SIGNAL_UP,
+    calculate_quotes_fast,
 )
 
 MID = 90_000.0
@@ -52,7 +52,9 @@ class TestQuoteEdges:
         assert ask_edge == 100.0
 
     def test_high_neutral_both_wide(self):
-        bid, ask, bid_edge, ask_edge, _ = calculate_quotes_fast(MID, SIGNAL_NEUTRAL, CONF_HIGH, TICK)
+        bid, ask, bid_edge, ask_edge, _ = calculate_quotes_fast(
+            MID, SIGNAL_NEUTRAL, CONF_HIGH, TICK
+        )
         assert bid_edge == 100.0
         assert ask_edge == 100.0
 
@@ -85,12 +87,16 @@ class TestSpreadTicks:
     """spread_ticks == (ask - bid) / tick_size."""
 
     def test_spread_ticks_high_up(self):
-        bid, ask, bid_edge, ask_edge, spread_ticks = calculate_quotes_fast(MID, SIGNAL_UP, CONF_HIGH, TICK)
+        bid, ask, bid_edge, ask_edge, spread_ticks = calculate_quotes_fast(
+            MID, SIGNAL_UP, CONF_HIGH, TICK
+        )
         expected_spread = (ask - bid) / TICK
         assert abs(spread_ticks - expected_spread) < 1e-6
 
     def test_spread_ticks_low(self):
-        bid, ask, bid_edge, ask_edge, spread_ticks = calculate_quotes_fast(MID, SIGNAL_NEUTRAL, CONF_LOW, TICK)
+        bid, ask, bid_edge, ask_edge, spread_ticks = calculate_quotes_fast(
+            MID, SIGNAL_NEUTRAL, CONF_LOW, TICK
+        )
         assert spread_ticks == pytest.approx(200.0, abs=1e-6)
 
 

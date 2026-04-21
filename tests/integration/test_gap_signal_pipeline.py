@@ -10,15 +10,16 @@ For Rust-layer gap calculation tests, see rust_engine/src/bybit.rs #[cfg(test)].
 """
 
 import pytest
+
 from gap_mm.engine import (
-    encode_signal,
-    calculate_quotes_fast,
-    SIGNAL_UP,
+    CONF_HIGH,
+    CONF_LOW,
+    CONF_MED,
     SIGNAL_DOWN,
     SIGNAL_NEUTRAL,
-    CONF_HIGH,
-    CONF_MED,
-    CONF_LOW,
+    SIGNAL_UP,
+    calculate_quotes_fast,
+    encode_signal,
 )
 
 TICK = 0.10

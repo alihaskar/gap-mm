@@ -3,12 +3,13 @@ Unit tests for gap_mm.engine.calculate_pnl_fast and check_signal_correct.
 """
 
 import pytest
+
 from gap_mm.engine import (
-    calculate_pnl_fast,
-    check_signal_correct,
-    SIGNAL_UP,
     SIGNAL_DOWN,
     SIGNAL_NEUTRAL,
+    SIGNAL_UP,
+    calculate_pnl_fast,
+    check_signal_correct,
 )
 
 
