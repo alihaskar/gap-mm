@@ -39,6 +39,7 @@ pub struct ExecutionReport {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FillEvent {
     pub symbol: String,
     pub order_id: String,
@@ -53,6 +54,7 @@ pub struct FillEvent {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct PrivateMessage {
     topic: String,
     #[serde(rename = "creationTime")]
@@ -142,14 +144,12 @@ async fn connect_and_stream(
     eprintln!("Sent authentication request...");
 
     // Wait for auth response
-    if let Some(Ok(msg)) = read.next().await {
-        if let Message::Text(text) = msg {
-            eprintln!("Auth response: {}", text);
-            if text.contains("\"success\":true") {
-                eprintln!("✓ Authentication successful");
-            } else {
-                return Err(anyhow::anyhow!("Authentication failed: {}", text));
-            }
+    if let Some(Ok(Message::Text(text))) = read.next().await {
+        eprintln!("Auth response: {}", text);
+        if text.contains("\"success\":true") {
+            eprintln!("✓ Authentication successful");
+        } else {
+            return Err(anyhow::anyhow!("Authentication failed: {}", text));
         }
     }
 

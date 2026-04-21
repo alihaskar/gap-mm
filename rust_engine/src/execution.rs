@@ -154,6 +154,7 @@ impl PositionState {
         self.positions.get(symbol).map(|r| r.value().clone())
     }
 
+    #[allow(dead_code)]
     pub fn update_position(&self, position: Position) {
         self.positions.insert(position.symbol.clone(), position);
     }
@@ -504,6 +505,7 @@ struct BybitResponse<T> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct SubmitOrderResponse {
     #[serde(rename = "orderId")]
     pub order_id: String,
@@ -512,6 +514,7 @@ pub struct SubmitOrderResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AmendOrderResponse {
     #[serde(rename = "orderId")]
     pub order_id: String,
@@ -520,6 +523,7 @@ pub struct AmendOrderResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct CancelOrderResponse {
     #[serde(rename = "orderId")]
     pub order_id: String,
@@ -567,6 +571,7 @@ pub struct ExecutionEngine {
 }
 
 impl ExecutionEngine {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_key: String,
         api_secret: String,

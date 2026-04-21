@@ -48,9 +48,11 @@ jobs:
           key: venv-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install Python dependencies
+        shell: bash
         run: poetry install --with dev
 
       - name: Build Rust extension (release)
+        shell: bash
         working-directory: rust_engine
         run: poetry run maturin develop --release
 
@@ -71,10 +73,13 @@ jobs:
       # ── Python checks ─────────────────────────────────────────────────────
 
       - name: Ruff lint
+        shell: bash
         run: poetry run ruff check src/ tests/
 
       - name: Ruff format check
+        shell: bash
         run: poetry run ruff format --check src/ tests/
 
       - name: pytest (unit + integration)
+        shell: bash
         run: poetry run pytest tests/ -v --tb=short

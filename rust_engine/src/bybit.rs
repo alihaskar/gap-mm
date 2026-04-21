@@ -52,9 +52,9 @@ pub struct MarketUpdate {
     /// where score_X = liquidity_beyond_gap_X / (gap_distance_X + ε).
     ///
     /// Interpretation (contrarian):
-    ///   > 0.5 → more resistance on ask side → price likely goes down
-    ///   < 0.5 → more support on bid side   → price likely goes up
-    ///   ≈ 0.5 → balanced
+    /// - above 0.5: more resistance on ask side → price likely goes down
+    /// - below 0.5: more support on bid side → price likely goes up
+    /// - near 0.5: balanced
     pub gap_prob_resistance_up: f64,
     pub gap_distance_up: u64,
     pub gap_distance_dn: u64,
@@ -91,8 +91,6 @@ struct LevelKey {
 pub struct OrderBookState {
     book: OrderBook<()>,
     levels: HashMap<LevelKey, OrderId>,
-    prev_best_bid: Option<u128>,
-    prev_best_ask: Option<u128>,
     /// Tick size in scaled integer units (price_f64 * PRICE_SCALE).
     tick_size_scaled: u128,
 }
@@ -103,8 +101,6 @@ impl OrderBookState {
         Self {
             book: OrderBook::<()>::new(symbol),
             levels: HashMap::new(),
-            prev_best_bid: None,
-            prev_best_ask: None,
             tick_size_scaled,
         }
     }
@@ -114,8 +110,6 @@ impl OrderBookState {
         *self = Self {
             book: OrderBook::<()>::new(symbol),
             levels: HashMap::new(),
-            prev_best_bid: None,
-            prev_best_ask: None,
             tick_size_scaled,
         };
     }
@@ -160,15 +154,6 @@ impl OrderBookState {
                 self.levels.insert(key, order_id);
             }
         }
-    }
-
-    pub fn get_best_bid_ask(&self) -> Option<(f64, f64)> {
-        let best_bid = self.book.best_bid()?;
-        let best_ask = self.book.best_ask()?;
-        Some((
-            (best_bid as f64) / PRICE_SCALE,
-            (best_ask as f64) / PRICE_SCALE,
-        ))
     }
 
     pub fn get_enriched_update(
@@ -307,15 +292,6 @@ impl OrderBookState {
             liquidity_up,
             liquidity_dn,
         )
-    }
-
-    pub fn update_and_check_change(&mut self) -> bool {
-        let best_bid = self.book.best_bid();
-        let best_ask = self.book.best_ask();
-        let changed = self.prev_best_bid != best_bid || self.prev_best_ask != best_ask;
-        self.prev_best_bid = best_bid;
-        self.prev_best_ask = best_ask;
-        changed
     }
 }
 
@@ -577,16 +553,16 @@ mod tests {
         add_bid(&mut state, 100.00, 1.0);
         add_ask(&mut state, 100.10, 1.0);
 
-        // Symmetrical gaps: 5 empty ticks then same liquidity on both sides
-        add_ask(&mut state, 100.60, 500.0); // 5 ticks gap up
-        add_bid(&mut state, 99.50, 500.0); // 5 ticks gap down
+        // 4 empty ticks between best ask (100.10) and next ask (100.60)
+        add_ask(&mut state, 100.60, 500.0); // 4 empty ticks above best ask
+        add_bid(&mut state, 99.50, 500.0); // 4 empty ticks below best bid
 
         let bid = state.book.best_bid().unwrap();
         let ask = state.book.best_ask().unwrap();
         let (score, gap_up, gap_dn, liq_up, liq_dn) = state.calculate_gap_probability(bid, ask);
 
-        assert_eq!(gap_up, 5, "should detect 5-tick gap up");
-        assert_eq!(gap_dn, 5, "should detect 5-tick gap down");
+        assert_eq!(gap_up, 4, "should detect 4 empty ticks above best ask");
+        assert_eq!(gap_dn, 4, "should detect 4 empty ticks below best bid");
         assert!(liq_up > 0);
         assert!(liq_dn > 0);
         // Balanced → score ≈ 0.5
@@ -651,7 +627,8 @@ mod tests {
         add_bid(&mut state, 3000.00, 1.0);
         add_ask(&mut state, 3000.01, 1.0);
 
-        // 10 tick gap up, 0 tick gap down (next level immediately)
+        // 9 empty ticks between best ask (3000.01) and next ask (3000.11)
+        // 0 empty ticks below best bid (2999.99 is immediately adjacent)
         add_ask(&mut state, 3000.11, 500.0);
         add_bid(&mut state, 2999.99, 500.0);
 
@@ -659,8 +636,11 @@ mod tests {
         let ask = state.book.best_ask().unwrap();
         let (_, gap_up, gap_dn, _, _) = state.calculate_gap_probability(bid, ask);
 
-        assert_eq!(gap_up, 10, "should detect 10-tick gap with 0.01 tick size");
-        assert_eq!(gap_dn, 0, "should detect 0-tick gap (immediate liquidity)");
+        assert_eq!(gap_up, 9, "should detect 9 empty ticks with 0.01 tick size");
+        assert_eq!(
+            gap_dn, 0,
+            "should detect 0 empty ticks (immediate liquidity)"
+        );
     }
 
     #[test]

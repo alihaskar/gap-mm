@@ -168,11 +168,11 @@ impl TradingNode {
     }
 
     fn __repr__(&self) -> String {
-        format!("TradingNode()")
+        "TradingNode()".to_string()
     }
 
     fn __str__(&self) -> String {
-        format!("TradingNode for Bybit orderbook streaming")
+        "TradingNode for Bybit orderbook streaming".to_string()
     }
 }
 
@@ -192,6 +192,7 @@ struct ExecutionNode {
 #[pymethods]
 impl ExecutionNode {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         api_key: String,
         api_secret: String,
@@ -430,11 +431,11 @@ impl ExecutionNode {
     }
 
     fn __repr__(&self) -> String {
-        format!("ExecutionNode()")
+        "ExecutionNode()".to_string()
     }
 
     fn __str__(&self) -> String {
-        format!("ExecutionNode for Bybit order execution")
+        "ExecutionNode for Bybit order execution".to_string()
     }
 }
 
