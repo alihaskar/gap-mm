@@ -8,7 +8,7 @@ A gap-probability market maker for Bybit spot/linear markets, implemented as a R
 
 ## What it does
 
-gap-mm is a two-sided quoting bot that uses **order-book gap analysis** to skew its bid/ask spread in real time:
+gap-mm is a two-sided quoting bot that uses **order-book gap analysis** to skew its bid/ask spread in real time. For a deeper dive into the theory behind [market making strategies](https://aligrithm.com), check out the author's blog at **[aligrithm.com](https://aligrithm.com)**.
 
 1. **TradingNode** (Rust): subscribes to Bybit's public WebSocket, maintains a lock-free L2 order book, and scans for gaps (empty tick ranges) on each side of the best bid/ask.
 2. **Gap score**: for each update, computes `gap_prob_resistance_up` — a normalized score of ask-side gap liquidity. High value → more resistance above → contrarian SELL skew. Low value → more support below → contrarian BUY skew.
@@ -282,4 +282,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## Author
 
-Ali Askar ([@alihaskar](https://github.com/alihaskar))
+Ali Askar ([@alihaskar](https://github.com/alihaskar)) — writes about algorithmic trading, market microstructure, and quantitative strategies at **[aligrithm.com](https://aligrithm.com)**.
